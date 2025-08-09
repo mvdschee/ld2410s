@@ -1,0 +1,45 @@
+[package]
+name = "ld2410s"
+version = "0.1.0"
+authors = ["Max van der Schee <26795741+mvdschee@users.noreply.github.com>"]
+description = "HLK-LD2410S driver with backend-agnostic UART ownership for serialport or esp-idf-hal"
+edition = "2024"
+resolver = "2"
+
+[lib]
+name = "ld2410s"
+crate-type = ["rlib"]
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[[example]]
+name = "desktop"
+path = "examples/desktop.rs"
+required-features = ["serial"]
+
+[[example]]
+name = "esp"
+path = "examples/esp.rs"
+required-features = ["embedded"]
+
+[dependencies]
+heapless = "0.8"
+nb = "1.1.0"
+
+[features]
+default = []
+serial = ["serialport"]
+embedded = ["esp-idf-hal"]
+
+[dependencies.serialport]
+version = "4.7.2"
+optional = true
+
+[dependencies.esp-idf-hal]
+version = "0.45.2"
+optional = true
