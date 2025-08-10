@@ -13,7 +13,7 @@ pub fn parse_minimal_frames(input: &[u8]) -> (Vec<MinimalPacket, 16>, usize) {
 			let hi = input[i + 3] as u16;
 			let dist = lo | (hi << 8);
 			let pkt = MinimalPacket {
-				signal: state,
+				presence: MinimalPacket::presence_hint(state),
 				distance_cm: dist,
 			};
 			let _ = out.push(pkt);

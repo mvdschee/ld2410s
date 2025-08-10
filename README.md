@@ -3,8 +3,6 @@
 A Rust library for reading and controlling the **HLK-LD2410S** 24GHz radar presence sensor over UART.
 Supports both **desktop** (via [serialport](https://crates.io/crates/serialport)) and **embedded** (via [esp-idf-hal](https://crates.io/crates/esp-idf-hal)) targets.
 
----
-
 ## ✨ Features
 
 - Works with **desktop** and **ESP-IDF** environments using the same API.
@@ -12,8 +10,6 @@ Supports both **desktop** (via [serialport](https://crates.io/crates/serialport)
 - Built-in **frame parsing** for minimal packets (`signal`, `distance_cm`).
 - Automatic caching of last reading if no fresh data is available.
 - Configurable **poll timeout**.
-
----
 
 ## 📦 Installation
 
@@ -24,8 +20,6 @@ Add to your `Cargo.toml`:
     ld2410s = { version = "0.1.0", features = ["serial"] }    # desktop serialport
     # ld2410s = { version = "0.1.0", features = ["embedded"] } # embedded ESP-IDF
 ```
-
----
 
 ## 🚀 Examples
 
@@ -59,8 +53,6 @@ Example code:
         }
     }
 ```
-
----
 
 ### ESP32 (via `esp-idf-hal`)
 
@@ -102,14 +94,10 @@ Example code:
     }
 ```
 
----
-
 ## ⚙️ Feature Flags
 
 - `serial` → Use [serialport](https://crates.io/crates/serialport) (desktop/hosted)
 - `embedded` → Use [esp-idf-hal](https://crates.io/crates/esp-idf-hal) (ESP32)
-
----
 
 ## 📝 License
 
