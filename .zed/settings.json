@@ -1,0 +1,30 @@
+{
+  "formatter": "auto",
+  "format_on_save": "on",
+  "languages": {
+    "Rust": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "rustfmt",
+          "arguments": ["--edition", "2024"]
+        }
+      },
+      "tab_size": 4,
+      "hard_tabs": true
+    }
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "checkOnSave": true,
+        "check": {
+          "command": "clippy"
+        },
+        "rustfmt": {
+          "extraArgs": ["--config-path", ".rustfmt.toml"]
+        }
+      }
+    }
+  }
+}
