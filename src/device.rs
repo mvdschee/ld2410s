@@ -79,6 +79,24 @@ where
 		self.run_config_transaction(&cmd)
 	}
 
+	/// Set trigger thresholds for all 16 gates.
+	pub fn set_trigger_thresholds(&mut self, thresholds: &[u16; 16]) -> Result<(), U::Error> {
+		let cmd = commands::write_trigger_threshold_frame(thresholds);
+		self.run_config_transaction(&cmd)
+	}
+
+	/// Set hold (maintenance) thresholds for all 16 gates.
+	pub fn set_hold_thresholds(&mut self, thresholds: &[u16; 16]) -> Result<(), U::Error> {
+		let cmd = commands::write_hold_threshold_frame(thresholds);
+		self.run_config_transaction(&cmd)
+	}
+
+	/// Configure auto-threshold parameters.
+	pub fn set_auto_threshold(&mut self, trigger_factor: u16, retention_factor: u16, scanning_time: u16) -> Result<(), U::Error> {
+		let cmd = commands::auto_threshold_frame(trigger_factor, retention_factor, scanning_time);
+		self.run_config_transaction(&cmd)
+	}
+
 	/// Helper to wrap a command in Enter/Exit config mode frames
 	fn run_config_transaction(&mut self, cmd: &[u8]) -> Result<(), U::Error> {
 		self.send_and_wait_ack(&commands::enter_config_frame())?;

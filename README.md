@@ -94,6 +94,44 @@ Add to your `Cargo.toml`:
 	}
 ```
 
+## ⚙️ Advanced Configuration
+
+### Manual Thresholds
+
+You can manually set the sensitivity (energy threshold) for each of the 16 distance gates.
+
+- **Trigger Threshold**: Energy required to switch from Unoccupied -> Occupied.
+- **Hold Threshold**: Energy required to maintain Occupied state.
+
+```rs
+// Set gates 0-15. Lower value = Higher sensitivity.
+// Example: High sensitivity for close range (gates 0-2), lower for far (3-15).
+let triggers: [u16; 16] = [
+    15, 15, 20, 30, 40, 50, 60, 60,
+    60, 60, 60, 60, 60, 60, 60, 60
+];
+sensor.set_trigger_thresholds(&triggers)?;
+
+// Hold thresholds are usually slightly lower than trigger to prevent flickering
+let holds: [u16; 16] = [
+    10, 10, 15, 25, 35, 45, 55, 55,
+    55, 55, 55, 55, 55, 55, 55, 55
+];
+sensor.set_hold_thresholds(&holds)?;
+```
+
+### Automatic Calibration
+
+Use this **once** during installation with an **empty room**. The sensor will measure background noise and set thresholds automatically.
+
+```rs
+// 1. Trigger Factor (added to noise floor for Trigger)
+// 2. Retention Factor (added to noise floor for Hold)
+// 3. Scanning Time (seconds) 
+// Example: factor=2, retention=1, scan=120s
+sensor.set_auto_threshold(2, 1, 120)?;
+```
+
 ## ⚙️ Feature Flags
 
 - `serial` → Use [serialport](https://crates.io/crates/serialport) (desktop/hosted)
