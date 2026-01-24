@@ -1,3 +1,5 @@
+use heapless::Vec;
+
 pub const BAUD_RATE: u32 = 115_200;
 
 // Minimal 5-byte frame markers
@@ -12,7 +14,7 @@ pub const STANDARD_TAIL: [u8; 4] = [0xF8, 0xF7, 0xF6, 0xF5];
 pub const CMD_HEAD: [u8; 4] = [0xFD, 0xFC, 0xFB, 0xFA];
 pub const CMD_TAIL: [u8; 4] = [0x04, 0x03, 0x02, 0x01];
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputMode {
 	Minimal,
 	Standard,
@@ -28,29 +30,23 @@ impl OutputMode {
 	}
 }
 
-impl MinimalPacket {
-	pub fn presence_hint(value: u8) -> bool {
-		match value {
-			0 | 1 => false,
-			2 | 3 => true,
-			_ => false,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct MinimalPacket {
 	pub presence: bool,
 	pub distance_cm: u16,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Standard data frame (Table 2-1: data_type=0x01)
+#[derive(Clone, Debug)]
 pub struct StandardPacket {
-	pub data_type: u8,    // typically 0x01
-	pub distance_cm: u16, // primary distance
+	pub data_type: u8,       // usually 0x01
+	pub presence: bool,      // mapped from “target state” (0/1 none, 2/3 some)
+	pub distance_cm: u16,    // little-endian
+	pub reserved: u16,       // 2 bytes after distance
+	pub energy: Vec<u8, 64>, // up to 64 energy bytes (distance gates)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Packet {
 	Minimal(MinimalPacket),
 	Standard(StandardPacket),
@@ -82,5 +78,11 @@ pub struct Reading {
 impl From<MinimalPacket> for Packet {
 	fn from(m: MinimalPacket) -> Self {
 		Packet::Minimal(m)
+	}
+}
+
+impl From<StandardPacket> for Packet {
+	fn from(s: StandardPacket) -> Self {
+		Packet::Standard(s)
 	}
 }

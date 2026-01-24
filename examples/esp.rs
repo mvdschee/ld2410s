@@ -1,5 +1,6 @@
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::uart::{UartDriver, config::Config};
+use ld2410s::OutputMode;
 use ld2410s::{BAUD_RATE, LD2410S, uart::EspUartWrapper};
 use std::time::Duration;
 
@@ -30,7 +31,8 @@ fn main() {
 	// uart.set_rx_timeout(Duration::from_millis(20))?;
 
 	// poll_timeout is 110ms as 100 is just hitting the cache every other read
-	let mut sensor = LD2410S::new(EspUartWrapper(uart), Duration::from_millis(110));
+	let mut sensor =
+		LD2410S::new(EspUartWrapper(uart), Duration::from_millis(110), OutputMode::Standard);
 
 	loop {
 		if let Some(r) = sensor.read_latest().unwrap() {

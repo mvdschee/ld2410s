@@ -1,4 +1,4 @@
-use ld2410s::{BAUD_RATE, LD2410S, OutputMode, Packet, uart::SerialPortWrapper};
+use ld2410s::{BAUD_RATE, LD2410S, OutputMode, uart::SerialPortWrapper};
 use std::time::Duration;
 
 fn main() {
@@ -8,18 +8,19 @@ fn main() {
 		.unwrap();
 
 	// poll_timeout is 110ms as 100 is just hitting the cache every other read
-	let mut sensor = LD2410S::new(SerialPortWrapper(port), Duration::from_millis(110));
+	let mut sensor =
+		LD2410S::new(SerialPortWrapper(port), Duration::from_millis(110), OutputMode::Standard);
 
-	let _ = sensor.init(OutputMode::Standard);
+	let _ = sensor.init();
 
 	loop {
-		if let Some(r) = sensor.read_latest().unwrap() {
-			if let Some(m) = r.data.as_minimal() {
-				println!("minimal: {:?}", m);
+		if let Some(reading) = sensor.read_latest().unwrap() {
+			if let Some(minimal_packet) = reading.data.as_minimal() {
+				println!("minimal: {:?}", minimal_packet);
 			}
 
-			if let Some(s) = r.data.as_standard() {
-				println!("standaard: {:?}", s);
+			if let Some(standard_packet) = reading.data.as_standard() {
+				println!("standaard: {:?}", standard_packet);
 			}
 		}
 
