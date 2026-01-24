@@ -92,7 +92,12 @@ where
 	}
 
 	/// Configure auto-threshold parameters.
-	pub fn set_auto_threshold(&mut self, trigger_factor: u16, retention_factor: u16, scanning_time: u16) -> Result<(), U::Error> {
+	pub fn set_auto_threshold(
+		&mut self,
+		trigger_factor: u16,
+		retention_factor: u16,
+		scanning_time: u16,
+	) -> Result<(), U::Error> {
 		let cmd = commands::auto_threshold_frame(trigger_factor, retention_factor, scanning_time);
 		self.run_config_transaction(&cmd)
 	}
