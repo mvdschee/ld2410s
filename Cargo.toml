@@ -28,7 +28,7 @@ path = "examples/esp.rs"
 required-features = ["embedded"]
 
 [dependencies]
-heapless = "0.8"
+heapless = "0.9.2"
 
 [features]
 default = []
@@ -36,7 +36,7 @@ serial = ["serialport"]
 embedded = ["esp-idf-hal"]
 
 [dependencies.serialport]
-version = "4.7.2"
+version = "4.8.1"
 optional = true
 
 [dependencies.esp-idf-hal]
