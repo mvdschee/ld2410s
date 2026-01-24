@@ -134,28 +134,31 @@ where
 			// Snapshot the beginning of the buffer to check headers
 			let mut head = [0u8; 4];
 			let len = self.stream_buf.len();
-			for i in 0..4.min(len) {
-				head[i] = *self.stream_buf.get(i).unwrap();
+
+			for (i, byte) in self.stream_buf.iter().take(4.min(len)).enumerate() {
+				head[i] = *byte;
 			}
 
-			let mut consumed = 0;
 			let mut parsed_packets = Vec::<Packet, 4>::new(); // small temporary batch
 
 			// 1. Check for Command/ACK Header
-			if head == CMD_HEAD {
+			let consumed = if head == CMD_HEAD {
 				// Copy relevant part to contiguous slice for parser
 				let snapshot_len = len.min(256); // Limit to reasonable frame size check
 				let mut snapshot = [0u8; 256];
-				for i in 0..snapshot_len {
-					snapshot[i] = *self.stream_buf.get(i).unwrap();
+
+				for (i, byte) in self.stream_buf.iter().take(snapshot_len).enumerate() {
+					snapshot[i] = *byte;
 				}
 
 				let (p, c) = parse_command_responses(&snapshot[..snapshot_len]);
+
 				if c > 0 {
 					for pkt in p {
 						let _ = parsed_packets.push(pkt);
 					}
-					consumed = c;
+
+					c
 				} else {
 					// Header matches but incomplete frame, wait for more data
 					break;
@@ -165,16 +168,19 @@ where
 			else if head == STANDARD_HEAD {
 				let snapshot_len = len.min(256);
 				let mut snapshot = [0u8; 256];
-				for i in 0..snapshot_len {
-					snapshot[i] = *self.stream_buf.get(i).unwrap();
+
+				for (i, byte) in self.stream_buf.iter().take(snapshot_len).enumerate() {
+					snapshot[i] = *byte;
 				}
 
 				let (p, c) = parse_standard_frames(&snapshot[..snapshot_len]);
+
 				if c > 0 {
 					for pkt in p {
 						let _ = parsed_packets.push(pkt);
 					}
-					consumed = c;
+
+					c
 				} else {
 					break;
 				}
@@ -183,16 +189,19 @@ where
 			else if head[0] == MINIMAL_HEAD {
 				let snapshot_len = len.min(16); // Minimal is only 5 bytes
 				let mut snapshot = [0u8; 16];
-				for i in 0..snapshot_len {
-					snapshot[i] = *self.stream_buf.get(i).unwrap();
+
+				for (i, byte) in self.stream_buf.iter().take(snapshot_len).enumerate() {
+					snapshot[i] = *byte;
 				}
 
 				let (p, c) = parse_minimal_frames(&snapshot[..snapshot_len]);
+
 				if c > 0 {
 					for pkt in p {
 						let _ = parsed_packets.push(pkt);
 					}
-					consumed = c;
+
+					c
 				} else {
 					// Might be incomplete minimal frame
 					if len < 5 {
@@ -200,14 +209,14 @@ where
 					} else {
 						// Malformed? parse_minimal_frames usually consumes if it finds valid frame.
 						// If it returned 0 consumed but we have >5 bytes, it's not a valid frame starting here.
-						consumed = 1; // Skip the 0x6E and try again
+						1 // Skip the 0x6E and try again
 					}
 				}
 			}
 			// 4. Unknown byte
 			else {
-				consumed = 1;
-			}
+				1
+			};
 
 			// Apply consumption
 			for _ in 0..consumed {

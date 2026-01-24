@@ -68,7 +68,31 @@ Add to your `Cargo.toml`:
 
     cargo run --example esp --features embedded
 
-See `examples/esp.rs` for full implementation.
+```rs
+	let peripherals = Peripherals::take().unwrap();
+	let pins = peripherals.pins;
+	let cfg = Config::default().baudrate(BAUD_RATE.Hz());
+	let uart = UartDriver::new(
+		peripherals.uart1,
+		pins.gpio4,
+		pins.gpio5,
+		None, None,
+		&cfg,
+	)?;
+
+	let mut sensor = LD2410S::new(EspUartWrapper(uart), OutputMode::Standard);
+	sensor.init()?;
+	sensor.set_distance_frequency(8.0)?;
+
+	loop {
+		if let Some(reading) = sensor.read_latest()? {
+			match reading.data {
+				ld2410s::Packet::Standard(s) => println!("Dist: {} Energy: {:?}", s.distance_cm, s.energy),
+				_ => {}
+			}
+		}
+	}
+```
 
 ## ⚙️ Feature Flags
 

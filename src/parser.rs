@@ -13,18 +13,19 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 	let mut i = 0usize;
 
 	while i + 10 <= input.len() {
-		if &input[i..i + 4] != CMD_HEAD {
+		if input[i..i + 4] != CMD_HEAD {
 			i += 1;
 			continue;
 		}
 
 		let data_len = (input[i + 4] as usize) | ((input[i + 5] as usize) << 8);
 		let total = 4 + 2 + data_len + 4;
+
 		if i + total > input.len() {
 			break;
 		}
 
-		if &input[i + total - 4..i + total] != CMD_TAIL {
+		if input[i + total - 4..i + total] != CMD_TAIL {
 			i += 1;
 			continue;
 		}
@@ -136,7 +137,7 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 
 	while i + 10 <= input.len() {
 		// Seek header
-		if i + 4 > input.len() || &input[i..i + 4] != STANDARD_HEAD {
+		if i + 4 > input.len() || input[i..i + 4] != STANDARD_HEAD {
 			i += 1;
 			continue;
 		}
@@ -145,16 +146,18 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 		if i + 6 > input.len() {
 			break; // incomplete length
 		}
+
 		let data_len = (input[i + 4] as usize) | ((input[i + 5] as usize) << 8);
 
 		// Entire frame size = head(4) + len(2) + data_len + tail(4)
 		let total = 4 + 2 + data_len + 4;
+
 		if i + total > input.len() {
 			break; // incomplete frame
 		}
 
 		// Tail check
-		if &input[i + total - 4..i + total] != STANDARD_TAIL {
+		if input[i + total - 4..i + total] != STANDARD_TAIL {
 			// Desync: skip this byte and resync
 			i += 1;
 			continue;
@@ -167,6 +170,7 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 		// Need at least: data_type(1) + state(1) + distance(2) + reserved(2) = 6 bytes
 		if data_len >= 6 {
 			let data_type = input[data_start];
+
 			if data_type == 0x01 {
 				let state = input[data_start + 1];
 				let dist_lo = input[data_start + 2] as u16;
@@ -180,6 +184,7 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 				// Energy bytes begin at offset 6 of payload, up to 64 bytes (if present)
 				let energy_start = data_start + 6;
 				let mut energy: Vec<u8, 64> = Vec::new();
+
 				if energy_start < data_end {
 					let available = data_end - energy_start;
 					let to_copy = core::cmp::min(available, 64);
