@@ -1,5 +1,5 @@
-use crate::parser::parse_standard_frames;
-use crate::types::Packet;
+use crate::parser::{parse_command_responses, parse_standard_frames};
+use crate::types::{CMD_HEAD, FirmwareVersion, MINIMAL_HEAD, Packet, STANDARD_HEAD};
 use crate::uart::UartInterface;
 use crate::{OutputMode, parser::parse_minimal_frames};
 use crate::{Reading, commands};
@@ -9,13 +9,30 @@ use std::time::{Duration, Instant};
 
 const STREAM_BUF_CAP: usize = 1024; // ring buffer size
 
+#[derive(Debug, Clone, Copy)]
+pub struct Config {
+	pub poll_timeout: Duration,
+	pub command_timeout: Duration,
+	pub config_mode_delay: Duration,
+}
+
+impl Default for Config {
+	fn default() -> Self {
+		Self {
+			poll_timeout: Duration::from_millis(100),
+			command_timeout: Duration::from_millis(1000),
+			config_mode_delay: Duration::from_millis(250),
+		}
+	}
+}
+
 /// Driver owning a UART interface
 pub struct LD2410S<U: UartInterface> {
 	uart: U,
 	stream_buf: Deque<u8, STREAM_BUF_CAP>,
 	last: Option<Packet>,
 	output_mode: OutputMode,
-	poll_timeout: Duration,
+	config: Config,
 }
 
 impl<U> LD2410S<U>
@@ -23,41 +40,74 @@ where
 	U: UartInterface,
 {
 	/// Create a new LD2410S driver.
-	/// `poll_timeout` is the maximum time `read_latest()` will wait for a fresh frame.
-	/// `output_mode` is the initial output mode of the device.
-	pub fn new(uart: U, poll_timeout: Duration, output_mode: OutputMode) -> Self {
+	pub fn new(uart: U, output_mode: OutputMode) -> Self {
 		Self {
 			uart,
 			stream_buf: Deque::new(),
 			last: None,
 			output_mode,
-			poll_timeout,
+			config: Config::default(),
 		}
 	}
 
-	/// Initialize the device with the given output mode.
+	pub fn set_config(&mut self, config: Config) {
+		self.config = config;
+	}
+
+	/// Initialize the device by switching to the desired output mode.
+	/// This does NOT set frequencies or speeds; use the setters for that.
 	pub fn init(&mut self) -> Result<(), U::Error> {
-		let [enter, switch, set_freq, exit] = commands::sequence_switch_to_standard_and_8hz();
+		let cmd = commands::switch_output_frame(self.output_mode);
+		self.run_config_transaction(&cmd)
+	}
 
-		self.uart.write_all(&enter)?;
-		self.read_for_and_dump(Duration::from_millis(100), "after ENTER")?;
+	pub fn set_distance_frequency(&mut self, hz: f32) -> Result<(), U::Error> {
+		let val = (hz * 10.0) as u16;
+		let cmd = commands::set_distance_freq_x10_frame(val);
+		self.run_config_transaction(&cmd)
+	}
 
-		self.uart.write_all(&switch)?;
-		self.read_for_and_dump(Duration::from_millis(200), "after SWITCH")?;
+	pub fn set_status_frequency(&mut self, hz: f32) -> Result<(), U::Error> {
+		let val = (hz * 10.0) as u16;
+		let cmd = commands::set_status_freq_x10_frame(val);
+		self.run_config_transaction(&cmd)
+	}
 
-		self.uart.write_all(&set_freq)?;
-		self.read_for_and_dump(Duration::from_millis(200), "after SET DIST FREQ 8Hz")?;
+	/// Set response speed: 5 (Normal) or 10 (Fast)
+	pub fn set_response_speed(&mut self, speed: u16) -> Result<(), U::Error> {
+		let cmd = commands::set_response_speed_frame(speed);
+		self.run_config_transaction(&cmd)
+	}
 
-		self.uart.write_all(&exit)?;
-		self.read_for_and_dump(Duration::from_millis(200), "after EXIT")?;
+	/// Helper to wrap a command in Enter/Exit config mode frames
+	fn run_config_transaction(&mut self, cmd: &[u8]) -> Result<(), U::Error> {
+		self.send_and_wait_ack(&commands::enter_config_frame())?;
+		sleep(self.config.config_mode_delay);
 
-		self.read_for_and_dump(Duration::from_millis(2000), "read_for_and_dump for 2s")?;
+		self.send_and_wait_ack(cmd)?;
+		sleep(self.config.config_mode_delay);
 
-		self.read_for_and_dump(Duration::from_millis(2000), "read_for_and_dump for 4s")?;
-
-		self.read_for_and_dump(Duration::from_millis(2000), "read_for_and_dump for 6s")?;
-
+		self.send_and_wait_ack(&commands::exit_config_frame())?;
+		sleep(self.config.config_mode_delay);
 		Ok(())
+	}
+
+	fn send_and_wait_ack(&mut self, cmd: &[u8]) -> Result<bool, U::Error> {
+		self.uart.write_all(cmd)?;
+		let start = Instant::now();
+		while start.elapsed() < self.config.command_timeout {
+			let packets = self.poll(256)?;
+			for p in packets {
+				if let Packet::Ack(ack) = p {
+					// We could check if ack.command matches cmd, but cmd parsing is tricky here
+					// without decoding the input cmd. For init sequence, any ACK is likely good enough
+					// or we assume it's for the last command.
+					return Ok(ack.success);
+				}
+			}
+			sleep(Duration::from_millis(10));
+		}
+		Ok(false) // Timeout
 	}
 
 	/// Non-blocking poll: reads whatever is available now, parses frames, updates cache.
@@ -73,39 +123,116 @@ where
 			}
 		}
 
-		// snapshot to contiguous
-		let mut snapshot = [0u8; STREAM_BUF_CAP];
-		let snapshot_len = self.stream_buf.len().min(STREAM_BUF_CAP);
-		for (idx, byte) in self.stream_buf.iter().take(snapshot_len).enumerate() {
-			snapshot[idx] = *byte;
-		}
-
-		// parse based on mode, map to Packet here so both branches have same type
-		let bytes_consumed;
 		let mut packets: Vec<Packet, 16> = Vec::new();
 
-		if self.output_mode == OutputMode::Standard {
-			let (std_packets, consumed_bytes) = parse_standard_frames(&snapshot[..snapshot_len]);
-			bytes_consumed = consumed_bytes;
-			for packet in std_packets.into_iter() {
-				let _ = packets.push(packet); // Packet::Standard
+		// Parse from the stream buffer continuously until we can't anymore
+		loop {
+			if self.stream_buf.len() < 4 {
+				break;
 			}
-		} else {
-			let (min_packets, consumed_bytes) = parse_minimal_frames(&snapshot[..snapshot_len]);
-			bytes_consumed = consumed_bytes;
-			for packet in min_packets.into_iter() {
-				let _ = packets.push(packet); // Packet::Minimal
+
+			// Snapshot the beginning of the buffer to check headers
+			let mut head = [0u8; 4];
+			let len = self.stream_buf.len();
+			for i in 0..4.min(len) {
+				head[i] = *self.stream_buf.get(i).unwrap();
+			}
+
+			let mut consumed = 0;
+			let mut parsed_packets = Vec::<Packet, 4>::new(); // small temporary batch
+
+			// 1. Check for Command/ACK Header
+			if head == CMD_HEAD {
+				// Copy relevant part to contiguous slice for parser
+				let snapshot_len = len.min(256); // Limit to reasonable frame size check
+				let mut snapshot = [0u8; 256];
+				for i in 0..snapshot_len {
+					snapshot[i] = *self.stream_buf.get(i).unwrap();
+				}
+
+				let (p, c) = parse_command_responses(&snapshot[..snapshot_len]);
+				if c > 0 {
+					for pkt in p {
+						let _ = parsed_packets.push(pkt);
+					}
+					consumed = c;
+				} else {
+					// Header matches but incomplete frame, wait for more data
+					break;
+				}
+			}
+			// 2. Check for Standard Header
+			else if head == STANDARD_HEAD {
+				let snapshot_len = len.min(256);
+				let mut snapshot = [0u8; 256];
+				for i in 0..snapshot_len {
+					snapshot[i] = *self.stream_buf.get(i).unwrap();
+				}
+
+				let (p, c) = parse_standard_frames(&snapshot[..snapshot_len]);
+				if c > 0 {
+					for pkt in p {
+						let _ = parsed_packets.push(pkt);
+					}
+					consumed = c;
+				} else {
+					break;
+				}
+			}
+			// 3. Check for Minimal Header (1 byte 0x6E)
+			else if head[0] == MINIMAL_HEAD {
+				let snapshot_len = len.min(16); // Minimal is only 5 bytes
+				let mut snapshot = [0u8; 16];
+				for i in 0..snapshot_len {
+					snapshot[i] = *self.stream_buf.get(i).unwrap();
+				}
+
+				let (p, c) = parse_minimal_frames(&snapshot[..snapshot_len]);
+				if c > 0 {
+					for pkt in p {
+						let _ = parsed_packets.push(pkt);
+					}
+					consumed = c;
+				} else {
+					// Might be incomplete minimal frame
+					if len < 5 {
+						break;
+					} else {
+						// Malformed? parse_minimal_frames usually consumes if it finds valid frame.
+						// If it returned 0 consumed but we have >5 bytes, it's not a valid frame starting here.
+						consumed = 1; // Skip the 0x6E and try again
+					}
+				}
+			}
+			// 4. Unknown byte
+			else {
+				consumed = 1;
+			}
+
+			// Apply consumption
+			for _ in 0..consumed {
+				let _ = self.stream_buf.pop_front();
+			}
+
+			// Add parsed packets to result
+			for pkt in parsed_packets {
+				let _ = packets.push(pkt);
+			}
+
+			// If we didn't consume anything, break to avoid infinite loop on partial data
+			if consumed == 0 {
+				break;
 			}
 		}
 
-		// consume parsed bytes from ring buffer
-		for _ in 0..bytes_consumed {
-			let _ = self.stream_buf.pop_front();
-		}
-
-		// update last-known packet (if any)
+		// Update last known state if data packet
 		if let Some(last_packet) = packets.last().cloned() {
-			self.last = Some(last_packet);
+			match last_packet {
+				Packet::Minimal(_) | Packet::Standard(_) => {
+					self.last = Some(last_packet);
+				}
+				_ => {}
+			}
 		}
 
 		Ok(packets)
@@ -117,14 +244,18 @@ where
 		let start = Instant::now();
 		loop {
 			let frames = self.poll(256)?;
-			if let Some(data) = frames.last() {
+			// Search for the latest DATA packet
+			let latest_data =
+				frames.iter().rev().find(|p| matches!(p, Packet::Minimal(_) | Packet::Standard(_)));
+
+			if let Some(data) = latest_data {
 				self.last = Some(data.clone());
 				return Ok(Some(Reading {
 					data: data.clone(),
 					fresh: true,
 				}));
 			}
-			if start.elapsed() >= self.poll_timeout {
+			if start.elapsed() >= self.config.poll_timeout {
 				return Ok(self.snapshot().map(|data| Reading {
 					data,
 					fresh: false,
@@ -134,7 +265,6 @@ where
 		}
 	}
 
-	/// Immediate snapshot of last-known data (if any)
 	pub fn snapshot(&self) -> Option<Packet> {
 		self.last.clone()
 	}
@@ -149,62 +279,59 @@ where
 		self.uart.write_all(&frame)
 	}
 
-	/// Read for `duration`, log raw bytes, and also append them to the ring buffer.
-	/// (So your normal `poll()`/parsers can still consume them later.)
-	fn read_for_and_dump(
-		&mut self,
-		duration: std::time::Duration,
-		label: &str,
-	) -> Result<(), U::Error> {
-		use std::time::Instant;
+	pub fn read_firmware_version(&mut self) -> Result<Option<FirmwareVersion>, U::Error> {
+		self.uart.write_all(&commands::enter_config_frame())?;
+		sleep(self.config.config_mode_delay);
 
+		let frame = commands::read_firmware_frame();
+		self.uart.write_all(&frame)?;
+
+		let mut result = None;
 		let start = Instant::now();
-		let mut collected: Vec<u8, 16> = Vec::new();
-		let mut buf = [0u8; 256];
-
-		while start.elapsed() < duration {
-			let n = self.uart.read(&mut buf)?;
-			if n > 0 {
-				collected.extend_from_slice(&buf[..n]);
-				// keep bytes in the stream buffer too
-				for &byte in &buf[..n] {
-					if self.stream_buf.push_back(byte).is_err() {
-						let _ = self.stream_buf.pop_front();
-						let _ = self.stream_buf.push_back(byte);
-					}
+		while start.elapsed() < self.config.command_timeout {
+			let packets = self.poll(256)?;
+			for p in packets {
+				if let Packet::Firmware(v) = p {
+					result = Some(v);
 				}
-			} else {
-				std::thread::sleep(std::time::Duration::from_millis(2));
 			}
+			if result.is_some() {
+				break;
+			}
+			sleep(Duration::from_millis(10));
 		}
 
-		if collected.is_empty() {
-			eprintln!("[ld2410s][{label}] no bytes received in {:?}", duration);
-		} else {
-			dump_hex(label, &collected);
-		}
-		Ok(())
+		self.uart.write_all(&commands::exit_config_frame())?;
+		sleep(self.config.config_mode_delay);
+
+		Ok(result)
 	}
-}
 
-fn dump_hex(label: &str, bytes: &[u8]) {
-	eprintln!("[ld2410s][{label}] {} bytes", bytes.len());
-	for chunk in bytes.chunks(16) {
-		// hex
-		let mut hex = String::new();
-		for b in chunk {
-			hex.push_str(&format!("{:02X} ", b));
+	pub fn read_serial_number(&mut self) -> Result<Option<Vec<u8, 32>>, U::Error> {
+		self.uart.write_all(&commands::enter_config_frame())?;
+		sleep(self.config.config_mode_delay);
+
+		let frame = commands::read_serial_frame();
+		self.uart.write_all(&frame)?;
+
+		let mut result = None;
+		let start = Instant::now();
+		while start.elapsed() < self.config.command_timeout {
+			let packets = self.poll(256)?;
+			for p in packets {
+				if let Packet::SerialNumber(sn) = p {
+					result = Some(sn);
+				}
+			}
+			if result.is_some() {
+				break;
+			}
+			sleep(Duration::from_millis(10));
 		}
-		// ascii
-		let mut ascii = String::new();
-		for b in chunk {
-			let c = if (0x20..=0x7E).contains(b) {
-				*b as char
-			} else {
-				'.'
-			};
-			ascii.push(c);
-		}
-		eprintln!("{:48} | {}", hex, ascii);
+
+		self.uart.write_all(&commands::exit_config_frame())?;
+		sleep(self.config.config_mode_delay);
+
+		Ok(result)
 	}
 }

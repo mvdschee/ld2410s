@@ -7,9 +7,22 @@ Supports both **desktop** (via [serialport](https://crates.io/crates/serialport)
 
 - Works with **desktop** and **ESP-IDF** environments using the same API.
 - **Unified UART interface** so your application doesn’t need to handle serial quirks.
-- Built-in **frame parsing** for minimal packets (`signal`, `distance_cm`).
+- Built-in **frame parsing** for:
+  - **Minimal Packets** (Presence state, Distance)
+  - **Standard/Engineering Packets** (Distance, Signal Energy arrays)
+  - **Firmware Version** & **Serial Number**
+- **Configuration Support**:
+  - Switch between Minimal and Standard/Engineering modes.
+  - Configure reporting frequency (e.g., 8Hz).
+  - Configure response speed.
 - Automatic caching of last reading if no fresh data is available.
-- Configurable **poll timeout**.
+
+## 📚 Documentation
+
+This library implements the protocol defined in the official HLK-LD2410S manuals:
+
+- [HLK-LD2410S Serial Communication Protocol V1.00](./docs/HLK-LD2410S_serial_communication_protocol-V1.00.pdf) (2024-08-23)
+- [HLK-LD2410S User Manual V1.2](./docs/HLK-LD2410S_User_manual-V1.2.pdf) (2023-10-31)
 
 ## 📦 Installation
 
@@ -27,72 +40,35 @@ Add to your `Cargo.toml`:
 
     cargo run --example desktop --features serial
 
-Example code:
-
 ```rs
-    use ld2410s::{LD2410S, BAUD_RATE, uart::SerialPortWrapper};
-    use std::time::Duration;
+	let port = serialport::new("/dev/tty.usbserial-140", BAUD_RATE)
+		.timeout(Duration::from_millis(50))
+		.open()?;
 
-    fn main() -> anyhow::Result<()> {
-        let port_name = "/dev/tty.usbserial-2120";
-        let port = serialport::new(port_name, BAUD_RATE)
-            .timeout(Duration::from_millis(50))
-            .open()?;
+	// 1. Initialize sensor (Standard Mode = Engineering Data)
+	let mut sensor = LD2410S::new(SerialPortWrapper(port), OutputMode::Standard);
+	sensor.init()?;
 
-        let mut dev = LD2410S::new(SerialPortWrapper(port), Duration::from_millis(100));
+	// 2. Configure for faster updates (8Hz)
+	sensor.set_distance_frequency(8.0)?;
+	sensor.set_status_frequency(8.0)?;
+	sensor.set_response_speed(10)?;
 
-        loop {
-            if let Some(r) = dev.read_latest()? {
-                println!(
-                    "{}: signal={} dist={}cm",
-                    if r.fresh { "fresh" } else { "cached" },
-                    r.pkt.signal,
-                    r.pkt.distance_cm
-                );
-            }
-        }
-    }
+	loop {
+		if let Some(reading) = sensor.read_latest()? {
+			match reading.data {
+				ld2410s::Packet::Standard(s) => println!("Dist: {} Energy: {:?}", s.distance_cm, s.energy),
+				_ => {}
+			}
+		}
+	}
 ```
 
 ### ESP32 (via `esp-idf-hal`)
 
     cargo run --example esp --features embedded
 
-Example code:
-
-```rs
-    use ld2410s::{LD2410S, BAUD_RATE, uart::EspUartWrapper};
-    use esp_idf_hal::prelude::*;
-    use esp_idf_hal::uart::{config::Config, UartDriver};
-    use std::time::Duration;
-
-    fn main() -> anyhow::Result<()> {
-        let peripherals = Peripherals::take().unwrap();
-        let pins = peripherals.pins;
-
-        let cfg = Config::default().baudrate(BAUD_RATE.Hz());
-        let uart = UartDriver::new(
-            peripherals.uart1,
-            pins.gpio4, // TX
-            pins.gpio5, // RX
-            None, None,
-            &cfg,
-        )?;
-
-        let mut dev = LD2410S::new(EspUartWrapper(uart), Duration::from_millis(100));
-
-        loop {
-            if let Some(r) = dev.read_latest()? {
-                println!(
-                    "{}: signal={} dist={}cm",
-                    if r.fresh { "fresh" } else { "cached" },
-                    r.pkt.signal,
-                    r.pkt.distance_cm
-                );
-            }
-        }
-    }
-```
+See `examples/esp.rs` for full implementation.
 
 ## ⚙️ Feature Flags
 

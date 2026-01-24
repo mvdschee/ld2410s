@@ -2,6 +2,23 @@ use heapless::Vec;
 
 pub const BAUD_RATE: u32 = 115_200;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TargetState {
+	Unoccupied, // 0x00 or 0x01
+	Occupied,   // 0x02 or 0x03
+	Unknown(u8),
+}
+
+impl From<u8> for TargetState {
+	fn from(byte: u8) -> Self {
+		match byte {
+			0x00 | 0x01 => TargetState::Unoccupied,
+			0x02 | 0x03 => TargetState::Occupied,
+			b => TargetState::Unknown(b),
+		}
+	}
+}
+
 // Minimal 5-byte frame markers
 pub const MINIMAL_HEAD: u8 = 0x6E;
 pub const MINIMAL_TAIL: u8 = 0x62;
@@ -25,31 +42,50 @@ impl OutputMode {
 	pub fn as_six_bytes(self) -> [u8; 6] {
 		match self {
 			OutputMode::Minimal => [0, 0, 0, 0, 0, 0],
-			OutputMode::Standard => [0, 0, 0, 1, 0, 0],
+			OutputMode::Standard => [0, 0, 1, 0, 0, 0],
 		}
 	}
 }
 
 #[derive(Clone, Debug)]
 pub struct MinimalPacket {
-	pub presence: bool,
+	pub target_state: TargetState,
 	pub distance_cm: u16,
 }
 
 /// Standard data frame (Table 2-1: data_type=0x01)
 #[derive(Clone, Debug)]
 pub struct StandardPacket {
-	pub data_type: u8,       // usually 0x01
-	pub presence: bool,      // mapped from “target state” (0/1 none, 2/3 some)
+	pub data_type: u8, // usually 0x01
+	pub target_state: TargetState,
 	pub distance_cm: u16,    // little-endian
 	pub reserved: u16,       // 2 bytes after distance
 	pub energy: Vec<u8, 64>, // up to 64 energy bytes (distance gates)
 }
 
 #[derive(Clone, Debug)]
+pub struct FirmwareVersion {
+	pub equipment_type: u32,
+	pub version_type: u16,
+	pub major: u16,
+	pub minor: u16,
+	pub patch: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct AckPacket {
+	pub command: u16,
+	pub success: bool,
+	pub payload: Vec<u8, 32>,
+}
+
+#[derive(Clone, Debug)]
 pub enum Packet {
 	Minimal(MinimalPacket),
 	Standard(StandardPacket),
+	Firmware(FirmwareVersion),
+	SerialNumber(Vec<u8, 32>),
+	Ack(AckPacket),
 }
 
 impl Packet {
