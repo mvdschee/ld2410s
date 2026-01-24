@@ -15,6 +15,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # Install dependencies (Linux)
+    - name: Install libudev-dev
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libudev-dev
+
     # Check formatting
     - name: Check formatting
       run: cargo fmt -- --check
