@@ -1,6 +1,6 @@
 [package]
 name = "ld2410s"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Max van der Schee <26795741+mvdschee@users.noreply.github.com>"]
 description = "HLK-LD2410S driver with backend-agnostic UART ownership for serialport or esp-idf-hal"
 edition = "2024"

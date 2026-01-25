@@ -79,12 +79,13 @@ mod embedded_impl {
 
 		fn write_all(&mut self, data: &[u8]) -> Result<(), Self::Error> {
 			// esp-idf-hal write is already blocking for the slice
-			self.0.write(data)
+			self.0.write(data).map(|_| ())
 		}
 
 		fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
 			// Treat UART timeout as "no data" (Ok(0)), pass through other errors.
-			match self.0.read(buf) {
+			// timeout=0 (non-blocking) ensures we don't block the polling loop.
+			match self.0.read(buf, 0) {
 				Ok(n) => Ok(n),
 				Err(e) if e.code() == ESP_ERR_TIMEOUT => Ok(0),
 				Err(e) => Err(e),
