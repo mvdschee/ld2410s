@@ -2,7 +2,7 @@ use ld2410s::{BAUD_RATE, LD2410S, OutputMode, uart::SerialPortWrapper};
 use std::time::Duration;
 
 fn main() {
-	let port = serialport::new("/dev/tty.usbserial-140", BAUD_RATE)
+	let port = serialport::new("/dev/tty.usbserial-123", BAUD_RATE)
 		.timeout(Duration::from_millis(50))
 		.open()
 		.unwrap();

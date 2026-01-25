@@ -30,8 +30,8 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.0", features = ["serial"] }    # desktop serialport
-# ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.0", features = ["embedded"] } # embedded ESP-IDF
+ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.1", features = ["serial"] }    # desktop serialport
+# ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.1", features = ["embedded"] } # embedded ESP-IDF
 ```
 
 ## 🚀 Examples
