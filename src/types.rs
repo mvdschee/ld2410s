@@ -104,13 +104,6 @@ impl Packet {
 	}
 }
 
-/// Returned by read_latest(): either fresh data or cached
-#[derive(Clone, Debug)]
-pub struct Reading {
-	pub data: Packet,
-	pub fresh: bool,
-}
-
 impl From<MinimalPacket> for Packet {
 	fn from(m: MinimalPacket) -> Self {
 		Packet::Minimal(m)
