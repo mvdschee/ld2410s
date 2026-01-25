@@ -18,6 +18,9 @@ mod protocol;
 mod types;
 pub mod uart;
 
+#[cfg(feature = "async")]
+pub mod asynchronous;
+
 use core::time::Duration;
 
 pub trait Timer {
