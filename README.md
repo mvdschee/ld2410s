@@ -21,17 +21,17 @@ Supports both **desktop** (via [serialport](https://crates.io/crates/serialport)
 
 This library implements the protocol defined in the official HLK-LD2410S manuals:
 
-- [HLK-LD2410S Serial Communication Protocol V1.00](./docs/HLK-LD2410S_serial_communication_protocol-V1.00.pdf) (2024-08-23)
-- [HLK-LD2410S User Manual V1.2](./docs/HLK-LD2410S_User_manual-V1.2.pdf) (2023-10-31)
+- [HLK-LD2410S Serial Communication Protocol V1.00](./docs/HLK-LD2410S_serial_communication_protocol-V1.00.pdf) (26 Nov 2024)
+- [HLK-LD2410S User Manual V1.2](./docs/HLK-LD2410S_User_manual-V1.2.pdf) (20 Apr 2024)
 
 ## 📦 Installation
 
 Add to your `Cargo.toml`:
 
 ```toml
-    [dependencies]
-    ld2410s = { version = "0.1.0", features = ["serial"] }    # desktop serialport
-    # ld2410s = { version = "0.1.0", features = ["embedded"] } # embedded ESP-IDF
+[dependencies]
+ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.0", features = ["serial"] }    # desktop serialport
+# ld2410s = { git = "https://github.com/mvdschee/ld2410s", tag = "v0.1.0", features = ["embedded"] } # embedded ESP-IDF
 ```
 
 ## 🚀 Examples
@@ -41,7 +41,7 @@ Add to your `Cargo.toml`:
     cargo run --example desktop --features serial
 
 ```rs
-	let port = serialport::new("/dev/tty.usbserial-140", BAUD_RATE)
+	let port = serialport::new("/dev/tty.usbserial-123", BAUD_RATE)
 		.timeout(Duration::from_millis(50))
 		.open()?;
 
@@ -127,7 +127,7 @@ Use this **once** during installation with an **empty room**. The sensor will me
 ```rs
 // 1. Trigger Factor (added to noise floor for Trigger)
 // 2. Retention Factor (added to noise floor for Hold)
-// 3. Scanning Time (seconds) 
+// 3. Scanning Time (seconds)
 // Example: factor=2, retention=1, scan=120s
 sensor.set_auto_threshold(2, 1, 120)?;
 ```
