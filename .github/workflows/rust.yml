@@ -36,3 +36,35 @@ jobs:
     # Run tests
     - name: Run tests
       run: cargo test --verbose --features serial
+
+  tag-release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep "^version =" Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "DETECTED_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create and Push Tag
+        run: |
+          TAG="v${{ env.DETECTED_VERSION }}"
+          
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping."
+          else
+            echo "Tag $TAG does not exist. Creating..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG"
+          fi
