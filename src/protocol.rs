@@ -68,7 +68,7 @@ impl Protocol {
 
 			// 1. Check for Command/ACK Header
 			if head == CMD_HEAD {
-				let (p, c) = self.parse_with::<_, 4>(|b| parse_command_responses(b), 256);
+				let (p, c) = self.parse_with::<_, 4>(parse_command_responses, 256);
 				if c > 0 {
 					consumed = c;
 					packet = p.first().cloned();
@@ -78,7 +78,7 @@ impl Protocol {
 			}
 			// 2. Check for Standard Header
 			else if head == STANDARD_HEAD {
-				let (p, c) = self.parse_with::<_, 16>(|b| parse_standard_frames(b), 256);
+				let (p, c) = self.parse_with::<_, 16>(parse_standard_frames, 256);
 				if c > 0 {
 					consumed = c;
 					packet = p.first().cloned();
@@ -88,7 +88,7 @@ impl Protocol {
 			}
 			// 3. Check for Minimal Header
 			else if head[0] == MINIMAL_HEAD {
-				let (p, c) = self.parse_with::<_, 16>(|b| parse_minimal_frames(b), 16);
+				let (p, c) = self.parse_with::<_, 16>(parse_minimal_frames, 16);
 				if c > 0 {
 					consumed = c;
 					packet = p.first().cloned();
@@ -136,5 +136,82 @@ impl Protocol {
 		}
 
 		parser(&snapshot[..final_len])
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	extern crate std;
+
+	use super::*;
+
+	fn minimal_frame(distance_cm: u16) -> [u8; 5] {
+		let [lo, hi] = distance_cm.to_le_bytes();
+		[MINIMAL_HEAD, 0x02, lo, hi, 0x62]
+	}
+
+	// Synthetic standard frame with the real layout (energy zeroed).
+	fn standard_frame(distance_cm: u16) -> [u8; 80] {
+		let mut f = [0u8; 80];
+		f[..4].copy_from_slice(&STANDARD_HEAD);
+		f[4] = 0x46; // data_len = 70
+		f[6] = 0x01; // data type
+		f[7] = 0x02; // target state
+		f[8..10].copy_from_slice(&distance_cm.to_le_bytes());
+		f[76..].copy_from_slice(&crate::types::STANDARD_TAIL);
+		f
+	}
+
+	fn distances(stream: &[u8], chunk: usize) -> std::vec::Vec<u16> {
+		let mut protocol = Protocol::new();
+		let mut out = std::vec::Vec::new();
+		for part in stream.chunks(chunk) {
+			protocol.process_bytes(part);
+			while let Some(p) = protocol.next_packet() {
+				match p {
+					Packet::Minimal(m) => out.push(m.distance_cm),
+					Packet::Standard(s) => out.push(s.distance_cm),
+					_ => {}
+				}
+			}
+		}
+		out
+	}
+
+	#[test]
+	fn no_minimal_frames_dropped_at_any_chunk_size() {
+		let expected: std::vec::Vec<u16> = (1..=30).collect();
+		let stream: std::vec::Vec<u8> = expected.iter().flat_map(|&d| minimal_frame(d)).collect();
+		for chunk in [1, 7, 128, stream.len()] {
+			assert_eq!(distances(&stream, chunk), expected, "chunk size {chunk}");
+		}
+	}
+
+	#[test]
+	fn no_standard_frames_dropped_at_any_chunk_size() {
+		let expected: std::vec::Vec<u16> = (1..=10).map(|d| d * 50).collect();
+		let stream: std::vec::Vec<u8> = expected.iter().flat_map(|&d| standard_frame(d)).collect();
+		for chunk in [1, 7, 128, stream.len()] {
+			assert_eq!(distances(&stream, chunk), expected, "chunk size {chunk}");
+		}
+	}
+
+	#[test]
+	fn no_acks_dropped_when_buffered_together() {
+		// Two ACKs from a real sensor (enter config, exit config) arriving in one read.
+		let enter = [
+			0xFD, 0xFC, 0xFB, 0xFA, 0x08, 0x00, 0xFF, 0x01, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00,
+			0x04, 0x03, 0x02, 0x01,
+		];
+		let exit =
+			[0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0xFE, 0x01, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01];
+		let mut protocol = Protocol::new();
+		protocol.process_bytes(&enter);
+		protocol.process_bytes(&exit);
+		let mut commands = std::vec::Vec::new();
+		while let Some(Packet::Ack(a)) = protocol.next_packet() {
+			commands.push(a.command);
+		}
+		assert_eq!(commands, [0x00FF, 0x00FE]);
 	}
 }

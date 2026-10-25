@@ -118,14 +118,14 @@ where
 		self.uart.write_all(cmd).map_err(Error::Uart)?;
 		let start = self.timer.now();
 		while self.timer.now() - start < self.config.command_timeout {
-			if let Some(p) = self.next_packet()? {
-				if let Packet::Ack(ack) = p {
-					return if ack.success {
-						Ok(())
-					} else {
-						Err(Error::CommandFailed)
-					};
-				}
+			if let Some(p) = self.next_packet()?
+				&& let Packet::Ack(ack) = p
+			{
+				return if ack.success {
+					Ok(())
+				} else {
+					Err(Error::CommandFailed)
+				};
 			}
 			self.timer.sleep(Duration::from_millis(10));
 		}
@@ -160,11 +160,11 @@ where
 		let mut result = None;
 		let start = self.timer.now();
 		while self.timer.now() - start < self.config.command_timeout {
-			if let Some(p) = self.next_packet()? {
-				if let Packet::Firmware(v) = p {
-					result = Some(v);
-					break;
-				}
+			if let Some(p) = self.next_packet()?
+				&& let Packet::Firmware(v) = p
+			{
+				result = Some(v);
+				break;
 			}
 			self.timer.sleep(Duration::from_millis(10));
 		}
@@ -185,11 +185,11 @@ where
 		let mut result = None;
 		let start = self.timer.now();
 		while self.timer.now() - start < self.config.command_timeout {
-			if let Some(p) = self.next_packet()? {
-				if let Packet::SerialNumber(sn) = p {
-					result = Some(sn);
-					break;
-				}
+			if let Some(p) = self.next_packet()?
+				&& let Packet::SerialNumber(sn) = p
+			{
+				result = Some(sn);
+				break;
 			}
 			self.timer.sleep(Duration::from_millis(10));
 		}

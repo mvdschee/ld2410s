@@ -101,6 +101,10 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 		}
 
 		i += total;
+		// Protocol consumes only up to the first packet; parsing further would drop frames.
+		if !out.is_empty() {
+			break;
+		}
 	}
 	(out, i)
 }
@@ -122,6 +126,7 @@ pub fn parse_minimal_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 			};
 			let _ = out.push(Packet::from(pkt));
 			i += 5;
+			break; // see parse_command_responses
 		} else {
 			i += 1;
 		}
@@ -208,6 +213,9 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 
 		// Consume this frame
 		i += total;
+		if !out.is_empty() {
+			break; // see parse_command_responses
+		}
 	}
 
 	(out, i)
