@@ -229,6 +229,23 @@ mod tests {
 	}
 
 	#[test]
+	fn threshold_readback_ack_keeps_full_payload() {
+		// Trigger threshold readback (0x0073) as sent by a real LD2410S: status + 16 x u32.
+		let values: [u32; 16] = [48, 42, 36, 34, 32, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31];
+		let mut frame = std::vec![0xFD, 0xFC, 0xFB, 0xFA, 0x44, 0x00, 0x73, 0x01, 0x00, 0x00];
+		frame.extend(values.iter().flat_map(|v| v.to_le_bytes()));
+		frame.extend([0x04, 0x03, 0x02, 0x01]);
+		let mut protocol = Protocol::new();
+		protocol.process_bytes(&frame);
+		let Some(Packet::Ack(ack)) = protocol.next_packet() else {
+			panic!("expected an ACK");
+		};
+		let decoded: std::vec::Vec<u32> =
+			ack.payload.chunks(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+		assert_eq!(decoded, values);
+	}
+
+	#[test]
 	fn no_acks_dropped_when_buffered_together() {
 		// Two ACKs from a real sensor (enter config, exit config) arriving in one read.
 		let enter = [

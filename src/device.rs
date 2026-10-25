@@ -120,15 +120,24 @@ where
 
 	/// Helper to wrap a command in Enter/Exit config mode frames
 	fn run_config_transaction(&mut self, cmd: &[u8]) -> Result<(), Error<U::Error>> {
-		self.send_and_wait_ack(&commands::enter_config_frame())?;
-		self.timer.sleep(self.config.config_mode_delay);
+		let mut result = Err(Error::Timeout);
+		// The sensor sometimes answers the first command after enter with a repeated
+		// enter ACK and drops the command (seen after a fresh plug-in), so retry once.
+		for _ in 0..2 {
+			self.send_and_wait_ack(&commands::enter_config_frame())?;
+			self.timer.sleep(self.config.config_mode_delay);
 
-		self.send_and_wait_ack(cmd)?;
-		self.timer.sleep(self.config.config_mode_delay);
+			result = self.send_and_wait_ack(cmd);
+			self.timer.sleep(self.config.config_mode_delay);
+			if !matches!(result, Err(Error::Timeout)) {
+				break;
+			}
+		}
 
+		// Always leave config mode, or the sensor stops reporting data.
 		self.send_and_wait_ack(&commands::exit_config_frame())?;
 		self.timer.sleep(self.config.config_mode_delay);
-		Ok(())
+		result
 	}
 
 	fn send_and_wait_ack(&mut self, cmd: &[u8]) -> Result<(), Error<U::Error>> {
@@ -316,6 +325,45 @@ mod tests {
 		};
 		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
 		assert!(dev.set_auto_threshold(2, 1, 120).is_ok());
+	}
+
+	#[test]
+	fn dropped_command_is_retried_once() {
+		// Seen on real hardware after a fresh plug-in: the first command after enter is dropped.
+		let mut dropped = false;
+		let uart = ScriptedUart {
+			reply: move |cmd| {
+				if cmd == 0x0070 && !dropped {
+					dropped = true;
+					return ack(0x00FF);
+				}
+				ack(cmd)
+			},
+			rx: StdVec::new(),
+		};
+		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
+		assert!(dev.set_response_speed(10).is_ok());
+	}
+
+	#[test]
+	fn failed_command_still_exits_config_mode() {
+		// Left in config mode, the sensor stops reporting data.
+		let sent = std::rc::Rc::new(core::cell::RefCell::new(StdVec::new()));
+		let log = sent.clone();
+		let uart = ScriptedUart {
+			reply: move |cmd| {
+				log.borrow_mut().push(cmd);
+				if cmd == 0x0070 {
+					ack(0x00FF)
+				} else {
+					ack(cmd)
+				}
+			},
+			rx: StdVec::new(),
+		};
+		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
+		assert!(matches!(dev.set_response_speed(10), Err(Error::Timeout)));
+		assert_eq!(sent.borrow().last(), Some(&0x00FE));
 	}
 
 	#[test]

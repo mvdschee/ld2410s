@@ -44,15 +44,25 @@ where
 	}
 
 	async fn run_config_transaction(&mut self, cmd: &[u8]) -> Result<(), Error<U::Error>> {
-		self.send_and_wait_ack(&commands::enter_config_frame()).await?;
-		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
+		let delay = Self::to_embassy_duration(self.config.config_mode_delay);
+		let mut result = Err(Error::Timeout);
+		// The sensor sometimes answers the first command after enter with a repeated
+		// enter ACK and drops the command (seen after a fresh plug-in), so retry once.
+		for _ in 0..2 {
+			self.send_and_wait_ack(&commands::enter_config_frame()).await?;
+			Timer::after(delay).await;
 
-		self.send_and_wait_ack(cmd).await?;
-		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
+			result = self.send_and_wait_ack(cmd).await;
+			Timer::after(delay).await;
+			if !matches!(result, Err(Error::Timeout)) {
+				break;
+			}
+		}
 
+		// Always leave config mode, or the sensor stops reporting data.
 		self.send_and_wait_ack(&commands::exit_config_frame()).await?;
-		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
-		Ok(())
+		Timer::after(delay).await;
+		result
 	}
 
 	async fn send_and_wait_ack(&mut self, cmd: &[u8]) -> Result<(), Error<U::Error>> {
@@ -62,22 +72,24 @@ where
 		let expected = commands::command_word(cmd);
 		let res = with_timeout(Self::to_embassy_duration(self.config.command_timeout), async {
 			loop {
-				match self.next_packet().await? {
+				match self.next_packet().await {
 					// Ignore stale ACKs for earlier commands; the sensor sometimes repeats them.
-					Some(Packet::Ack(ack)) if ack.command == expected => {
+					Ok(Some(Packet::Ack(ack))) if ack.command == expected => {
 						return if ack.success {
 							Ok(())
 						} else {
 							Err(Error::CommandFailed)
 						};
 					}
-					Some(_) => {
+					Ok(Some(_)) => {
 						// Received a non-ACK packet (e.g. data).
 						// Process the next packet immediately; don't sleep.
 						continue;
 					}
-					None => {
-						// No packet available yet. Yield/sleep briefly.
+					// No packet available yet, or a read error: bytes were lost (e.g. esp-hal's
+					// 128-byte RX FIFO overflowed during a pause), but the ACK may still follow.
+					// Yield/sleep briefly; the timeout bounds a persistent error.
+					Ok(None) | Err(_) => {
 						Timer::after(Duration::from_millis(5)).await;
 					}
 				}
@@ -115,17 +127,18 @@ where
 
 		let res = with_timeout(Self::to_embassy_duration(self.config.command_timeout), async {
 			loop {
-				match self.next_packet().await? {
-					Some(Packet::Firmware(v)) => return Ok::<FirmwareVersion, Error<U::Error>>(v),
-					Some(_) => continue,
-					None => Timer::after(Duration::from_millis(5)).await,
+				match self.next_packet().await {
+					Ok(Some(Packet::Firmware(v))) => return v,
+					Ok(Some(_)) => continue,
+					// A read error means lost bytes, not a lost reply (see send_and_wait_ack).
+					Ok(None) | Err(_) => Timer::after(Duration::from_millis(5)).await,
 				}
 			}
 		})
 		.await;
 
 		let result = match res {
-			Ok(inner) => inner?,
+			Ok(inner) => inner,
 			Err(TimeoutError) => return Err(Error::Timeout),
 		};
 
@@ -212,19 +225,18 @@ where
 
 		let res = with_timeout(Self::to_embassy_duration(self.config.command_timeout), async {
 			loop {
-				match self.next_packet().await? {
-					Some(Packet::SerialNumber(sn)) => {
-						return Ok::<Vec<u8, 32>, Error<U::Error>>(sn);
-					}
-					Some(_) => continue,
-					None => Timer::after(Duration::from_millis(5)).await,
+				match self.next_packet().await {
+					Ok(Some(Packet::SerialNumber(sn))) => return sn,
+					Ok(Some(_)) => continue,
+					// A read error means lost bytes, not a lost reply (see send_and_wait_ack).
+					Ok(None) | Err(_) => Timer::after(Duration::from_millis(5)).await,
 				}
 			}
 		})
 		.await;
 
 		let result = match res {
-			Ok(inner) => inner?,
+			Ok(inner) => inner,
 			Err(TimeoutError) => return Err(Error::Timeout),
 		};
 
@@ -232,5 +244,63 @@ where
 		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
 
 		Ok(result)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	extern crate std;
+
+	use super::*;
+	use embedded_io_async::{ErrorKind, ErrorType};
+	use std::vec::Vec as StdVec;
+
+	/// ACKs every command; the first `failed_reads` reads fail like an overflowed FIFO.
+	struct OverflowingUart {
+		failed_reads: usize,
+		rx: StdVec<u8>,
+	}
+
+	impl ErrorType for OverflowingUart {
+		type Error = ErrorKind;
+	}
+
+	impl Write for OverflowingUart {
+		async fn write(&mut self, data: &[u8]) -> Result<usize, ErrorKind> {
+			let [lo, _] = commands::command_word(data).to_le_bytes();
+			self.rx.extend([
+				0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, lo, 0x01, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01,
+			]);
+			Ok(data.len())
+		}
+
+		async fn flush(&mut self) -> Result<(), ErrorKind> {
+			Ok(())
+		}
+	}
+
+	impl Read for OverflowingUart {
+		async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
+			if self.failed_reads > 0 {
+				self.failed_reads -= 1;
+				return Err(ErrorKind::Other);
+			}
+			let n = self.rx.len().min(buf.len());
+			buf[..n].copy_from_slice(&self.rx[..n]);
+			self.rx.drain(..n);
+			Ok(n)
+		}
+	}
+
+	#[tokio::test]
+	async fn read_error_while_waiting_for_ack_is_not_fatal() {
+		// Seen on an ESP32-C3 with esp-hal: the 128-byte RX FIFO overflows during the driver's
+		// pauses, and the next read reports it. The bytes are lost, the ACK still follows.
+		let uart = OverflowingUart {
+			failed_reads: 1,
+			rx: StdVec::new(),
+		};
+		let mut dev = LD2410SAsync::new(uart, OutputMode::Minimal);
+		assert!(dev.set_response_speed(10).await.is_ok());
 	}
 }

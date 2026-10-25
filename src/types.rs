@@ -76,7 +76,7 @@ pub struct FirmwareVersion {
 pub struct AckPacket {
 	pub command: u16,
 	pub success: bool,
-	pub payload: Vec<u8, 32>,
+	pub payload: Vec<u8, 64>, // largest reply: threshold readback, 16 x u32
 }
 
 #[derive(Clone, Debug)]

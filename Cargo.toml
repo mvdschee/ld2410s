@@ -28,6 +28,11 @@ path = "examples/calibrate.rs"
 required-features = ["serial"]
 
 [[example]]
+name = "configure"
+path = "examples/configure.rs"
+required-features = ["serial"]
+
+[[example]]
 name = "esp"
 path = "examples/esp.rs"
 required-features = ["embedded"]
