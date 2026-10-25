@@ -47,6 +47,11 @@ fn build_cmd(cmd: u16, params: &[u8]) -> Vec<u8, MAX_CMD_SIZE> {
 	out
 }
 
+/// Command word of a frame built by `build_cmd`; ACKs echo it back.
+pub fn command_word(frame: &[u8]) -> u16 {
+	(frame[6] as u16) | ((frame[7] as u16) << 8)
+}
+
 // ---- High-level helpers built on build_cmd ----
 
 pub fn read_firmware_frame() -> Vec<u8, MAX_CMD_SIZE> {
@@ -102,20 +107,11 @@ pub fn auto_threshold_frame(
 	retention_factor: u16,
 	scanning_time: u16,
 ) -> Vec<u8, MAX_CMD_SIZE> {
-	let mut params: Vec<u8, 64> = Vec::new();
-	params.extend_from_slice(&[0x02, 0x00]).unwrap(); // Trigger factor word
-	params.push((trigger_factor & 0xFF) as u8).unwrap();
-	params.push((trigger_factor >> 8) as u8).unwrap();
-
-	params.extend_from_slice(&[0x01, 0x00]).unwrap(); // Retention factor word
-	params.push((retention_factor & 0xFF) as u8).unwrap();
-	params.push((retention_factor >> 8) as u8).unwrap();
-
-	params.extend_from_slice(&[0x78, 0x00]).unwrap(); // Scanning time word
-	params.push((scanning_time & 0xFF) as u8).unwrap();
-	params.push((scanning_time >> 8) as u8).unwrap();
-
-	build_cmd(CMD_AUTO_THRESHOLD, &params)
+	// Three bare u16 values, no parameter words (PDF 2.2.9).
+	let [t0, t1] = trigger_factor.to_le_bytes();
+	let [r0, r1] = retention_factor.to_le_bytes();
+	let [s0, s1] = scanning_time.to_le_bytes();
+	build_cmd(CMD_AUTO_THRESHOLD, &[t0, t1, r0, r1, s0, s1])
 }
 
 fn build_threshold_params(thresholds: &[u16; 16]) -> Vec<u8, MAX_CMD_SIZE> {
@@ -177,4 +173,42 @@ pub fn set_status_freq_x10_frame(x10_hz: u16) -> Vec<u8, MAX_CMD_SIZE> {
 /// 5 = Normal, 10 = Fast.
 pub fn set_response_speed_frame(speed: u16) -> Vec<u8, MAX_CMD_SIZE> {
 	write_generic_params_frame(&[(0x000B, speed as u32)])
+}
+
+/// Set the detection range in distance gates (~0.7 m each): nearest (word 0x000A, 0..=16)
+/// and farthest (word 0x0005, 1..=16). Motion outside the range is ignored.
+pub fn set_gate_range_frame(nearest: u8, farthest: u8) -> Vec<u8, MAX_CMD_SIZE> {
+	write_generic_params_frame(&[(0x0005, farthest as u32), (0x000A, nearest as u32)])
+}
+
+/// Set the delay before reporting "no one" after the last detection (word 0x0006, 10..=120 s).
+pub fn set_no_one_delay_frame(seconds: u16) -> Vec<u8, MAX_CMD_SIZE> {
+	write_generic_params_frame(&[(0x0006, seconds as u32)])
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn gate_range_and_delay_frames_match_pdf_example() {
+		// PDF 2.2.7 example: farthest gate 12, nearest gate 0, no-one delay 40 s.
+		let range = set_gate_range_frame(0, 12);
+		assert_eq!(
+			&range[8..],
+			&[0x05, 0x00, 0x0C, 0, 0, 0, 0x0A, 0x00, 0, 0, 0, 0, 0x04, 0x03, 0x02, 0x01]
+		);
+		let delay = set_no_one_delay_frame(40);
+		assert_eq!(&delay[8..14], &[0x06, 0x00, 0x28, 0, 0, 0]);
+	}
+
+	#[test]
+	fn auto_threshold_frame_matches_pdf_example() {
+		// PDF 2.2.9: trigger factor 2, retention factor 1, scanning time 120 s.
+		let expected = [
+			0xFD, 0xFC, 0xFB, 0xFA, 0x08, 0x00, 0x09, 0x00, 0x02, 0x00, 0x01, 0x00, 0x78, 0x00,
+			0x04, 0x03, 0x02, 0x01,
+		];
+		assert_eq!(auto_threshold_frame(2, 1, 120).as_slice(), &expected);
+	}
 }

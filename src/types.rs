@@ -58,9 +58,9 @@ pub struct MinimalPacket {
 pub struct StandardPacket {
 	pub data_type: u8, // usually 0x01
 	pub target_state: TargetState,
-	pub distance_cm: u16,    // little-endian
-	pub reserved: u16,       // 2 bytes after distance
-	pub energy: Vec<u8, 64>, // up to 64 energy bytes (distance gates)
+	pub distance_cm: u16,  // little-endian
+	pub reserved: u16,     // 2 bytes after distance
+	pub energy: [u32; 16], // energy per distance gate (u32 LE each)
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +86,8 @@ pub enum Packet {
 	Firmware(FirmwareVersion),
 	SerialNumber(Vec<u8, 32>),
 	Ack(AckPacket),
+	/// Auto-threshold progress (data type 0x03), raw value as reported (progress * 100).
+	ThresholdProgress(u16),
 }
 
 impl Packet {

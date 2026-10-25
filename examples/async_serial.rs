@@ -6,7 +6,7 @@ use tokio_serial::SerialPortBuilderExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-	let port_name = "/dev/tty.usbserial-130"; // Adjust to your port
+	let port_name = std::env::args().nth(1).unwrap_or("/dev/tty.usbserial-130".into());
 
 	let mut port = tokio_serial::new(port_name, BAUD_RATE).open_native_async()?;
 
@@ -46,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
 				Packet::Ack(ack) => println!("ACK: {:?}", ack),
 				Packet::Firmware(v) => println!("Firmware: {:?}", v),
 				Packet::SerialNumber(sn) => println!("Serial Number: {:?}", sn),
+				Packet::ThresholdProgress(p) => println!("Threshold progress: {}", p),
 			},
 			Ok(None) => {}
 			Err(e) => eprintln!("UART Error: {:?}", e),

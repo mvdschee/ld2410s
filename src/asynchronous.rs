@@ -59,10 +59,12 @@ where
 		self.uart.write_all(cmd).await.map_err(Error::Uart)?;
 		self.uart.flush().await.map_err(Error::Uart)?;
 
+		let expected = commands::command_word(cmd);
 		let res = with_timeout(Self::to_embassy_duration(self.config.command_timeout), async {
 			loop {
 				match self.next_packet().await? {
-					Some(Packet::Ack(ack)) => {
+					// Ignore stale ACKs for earlier commands; the sensor sometimes repeats them.
+					Some(Packet::Ack(ack)) if ack.command == expected => {
 						return if ack.success {
 							Ok(())
 						} else {
@@ -145,6 +147,22 @@ where
 		self.run_config_transaction(&cmd).await
 	}
 
+	/// Set the detection range in distance gates (~0.7 m each); motion outside it is ignored.
+	pub async fn set_gate_range(
+		&mut self,
+		nearest: u8,
+		farthest: u8,
+	) -> Result<(), Error<U::Error>> {
+		let cmd = commands::set_gate_range_frame(nearest, farthest);
+		self.run_config_transaction(&cmd).await
+	}
+
+	/// Set the delay (10..=120 s) before "no one" is reported after the last detection.
+	pub async fn set_no_one_delay(&mut self, seconds: u16) -> Result<(), Error<U::Error>> {
+		let cmd = commands::set_no_one_delay_frame(seconds);
+		self.run_config_transaction(&cmd).await
+	}
+
 	pub async fn set_response_speed(&mut self, speed: u16) -> Result<(), Error<U::Error>> {
 		let cmd = commands::set_response_speed_frame(speed);
 		self.run_config_transaction(&cmd).await
@@ -164,6 +182,24 @@ where
 	) -> Result<(), Error<U::Error>> {
 		let cmd = commands::write_hold_threshold_frame(thresholds);
 		self.run_config_transaction(&cmd).await
+	}
+
+	/// Configure auto-threshold parameters.
+	pub async fn set_auto_threshold(
+		&mut self,
+		trigger_factor: u16,
+		retention_factor: u16,
+		scanning_time: u16,
+	) -> Result<(), Error<U::Error>> {
+		let cmd = commands::auto_threshold_frame(trigger_factor, retention_factor, scanning_time);
+		self.send_and_wait_ack(&commands::enter_config_frame()).await?;
+		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
+		self.send_and_wait_ack(&cmd).await?;
+		Timer::after(Self::to_embassy_duration(self.config.config_mode_delay)).await;
+		// The scan starts on exit and the sensor does not ACK that exit (seen on firmware 1.1.1).
+		let exit = commands::exit_config_frame();
+		self.uart.write_all(&exit).await.map_err(Error::Uart)?;
+		self.uart.flush().await.map_err(Error::Uart)
 	}
 
 	pub async fn read_serial_number(&mut self) -> Result<Vec<u8, 32>, Error<U::Error>> {

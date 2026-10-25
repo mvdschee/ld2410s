@@ -5,7 +5,8 @@ use ld2410s::{
 use std::time::Duration;
 
 fn main() {
-	let port = serialport::new("/dev/tty.usbserial-130", BAUD_RATE)
+	let port_name = std::env::args().nth(1).unwrap_or("/dev/tty.usbserial-130".into());
+	let port = serialport::new(port_name, BAUD_RATE)
 		.timeout(Duration::from_millis(50))
 		.open()
 		.expect("Failed to open serial port");
@@ -58,6 +59,7 @@ fn main() {
 					)
 				}
 				ld2410s::Packet::SerialNumber(sn) => println!("Serial Number: {:?}", sn),
+				ld2410s::Packet::ThresholdProgress(p) => println!("Threshold progress: {}", p),
 			},
 			Ok(None) => {
 				// No packet ready yet

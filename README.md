@@ -41,7 +41,7 @@ ld2410s = { version = "0.2.0", features = ["serial"] }
 
 ### Desktop (Sync)
 
-    cargo run --example serial --features serial
+    cargo run --example serial --features serial -- /dev/tty.usbserial-123
 
 ```rs
 	let port = serialport::new("/dev/tty.usbserial-123", BAUD_RATE)
@@ -62,6 +62,12 @@ ld2410s = { version = "0.2.0", features = ["serial"] }
 		}
 	}
 ```
+
+### Calibration
+
+Runs the sensor's automatic threshold calibration. Keep the detection area empty while it runs (default 120 s).
+
+    cargo run --example calibrate --features serial -- /dev/tty.usbserial-123 [seconds]
 
 ### Desktop (Async via Tokio)
 

@@ -5,7 +5,7 @@ use ld2410s::asynchronous::LD2410SAsync;
 use ld2410s::{BAUD_RATE, OutputMode, Packet};
 
 fn main() -> anyhow::Result<()> {
-	esp_idf_svc::sys::link_patches();
+	esp_idf_hal::sys::link_patches();
 
 	let peripherals = Peripherals::take().unwrap();
 	let pins = peripherals.pins;
