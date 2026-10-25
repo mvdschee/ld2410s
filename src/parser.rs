@@ -101,6 +101,10 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 		}
 
 		i += total;
+		// Protocol consumes only up to the first packet; parsing further would drop frames.
+		if !out.is_empty() {
+			break;
+		}
 	}
 	(out, i)
 }
@@ -122,6 +126,7 @@ pub fn parse_minimal_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 			};
 			let _ = out.push(Packet::from(pkt));
 			i += 5;
+			break; // see parse_command_responses
 		} else {
 			i += 1;
 		}
@@ -167,47 +172,54 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 		let data_start = i + 6;
 		let data_end = data_start + data_len;
 
+		let data_type = if data_len >= 1 {
+			input[data_start]
+		} else {
+			0
+		};
+
+		if data_type == 0x03 && data_len >= 3 {
+			let progress = (input[data_start + 1] as u16) | ((input[data_start + 2] as u16) << 8);
+			let _ = out.push(Packet::ThresholdProgress(progress));
+		}
+
 		// Need at least: data_type(1) + state(1) + distance(2) + reserved(2) = 6 bytes
-		if data_len >= 6 {
-			let data_type = input[data_start];
+		if data_type == 0x01 && data_len >= 6 {
+			let state = input[data_start + 1];
+			let dist_lo = input[data_start + 2] as u16;
+			let dist_hi = input[data_start + 3] as u16;
+			let distance_cm = dist_lo | (dist_hi << 8);
 
-			if data_type == 0x01 {
-				let state = input[data_start + 1];
-				let dist_lo = input[data_start + 2] as u16;
-				let dist_hi = input[data_start + 3] as u16;
-				let distance_cm = dist_lo | (dist_hi << 8);
+			let res_lo = input[data_start + 4] as u16;
+			let res_hi = input[data_start + 5] as u16;
+			let _reserved = res_lo | (res_hi << 8);
 
-				let res_lo = input[data_start + 4] as u16;
-				let res_hi = input[data_start + 5] as u16;
-				let _reserved = res_lo | (res_hi << 8);
-
-				// Energy bytes begin at offset 6 of payload, up to 64 bytes (if present)
-				let energy_start = data_start + 6;
-				let mut energy: Vec<u8, 64> = Vec::new();
-
-				if energy_start < data_end {
-					let available = data_end - energy_start;
-					let to_copy = core::cmp::min(available, 64);
-					for k in 0..to_copy {
-						let _ = energy.push(input[energy_start + k]);
-					}
+			// Energy begins at offset 6 of payload: 16 gates, u32 LE each (if present)
+			let energy_start = data_start + 6;
+			let mut energy = [0u32; 16];
+			for (gate, value) in energy.iter_mut().enumerate() {
+				let k = energy_start + gate * 4;
+				if k + 4 <= data_end {
+					*value =
+						u32::from_le_bytes([input[k], input[k + 1], input[k + 2], input[k + 3]]);
 				}
-
-				let pkt = StandardPacket {
-					data_type,
-					target_state: TargetState::from(state),
-					distance_cm,
-					reserved: _reserved,
-					energy,
-				};
-				let _ = out.push(Packet::from(pkt));
-			} else {
-				// Not the 0x01 standard data subtype; ignore here
 			}
+
+			let pkt = StandardPacket {
+				data_type,
+				target_state: TargetState::from(state),
+				distance_cm,
+				reserved: _reserved,
+				energy,
+			};
+			let _ = out.push(Packet::from(pkt));
 		}
 
 		// Consume this frame
 		i += total;
+		if !out.is_empty() {
+			break; // see parse_command_responses
+		}
 	}
 
 	(out, i)

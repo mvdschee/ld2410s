@@ -1,6 +1,6 @@
 [package]
 name = "ld2410s"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Max van der Schee <26795741+mvdschee@users.noreply.github.com>"]
 description = "HLK-LD2410S driver with backend-agnostic UART ownership for serialport or esp-idf-hal"
 edition = "2024"
@@ -18,8 +18,18 @@ debug = true
 opt-level = "z"
 
 [[example]]
-name = "desktop"
-path = "examples/desktop.rs"
+name = "serial"
+path = "examples/serial.rs"
+required-features = ["serial"]
+
+[[example]]
+name = "calibrate"
+path = "examples/calibrate.rs"
+required-features = ["serial"]
+
+[[example]]
+name = "configure"
+path = "examples/configure.rs"
 required-features = ["serial"]
 
 [[example]]
@@ -27,13 +37,26 @@ name = "esp"
 path = "examples/esp.rs"
 required-features = ["embedded"]
 
+[[example]]
+name = "async_serial"
+path = "examples/async_serial.rs"
+required-features = ["async"]
+
+[[example]]
+name = "async_esp"
+path = "examples/async_esp.rs"
+required-features = ["embedded", "async"]
+
 [dependencies]
 heapless = "0.9.2"
+embedded-io-async = { version = "0.7.0", optional = true }
+embassy-time = { version = "0.5.0", optional = true }
 
 [features]
 default = []
 serial = ["serialport"]
 embedded = ["esp-idf-hal"]
+async = ["embedded-io-async", "embassy-time"]
 
 [dependencies.serialport]
 version = "4.8.1"
@@ -42,3 +65,11 @@ optional = true
 [dependencies.esp-idf-hal]
 version = "0.45.2"
 optional = true
+
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-serial = "5.4.5"
+embedded-io-adapters = { version = "0.7.0", features = ["tokio-1"] }
+anyhow = "1.0.100"
+embassy-time = { version = "0.5.0", features = ["std", "generic-queue-8"] }

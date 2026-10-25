@@ -37,6 +37,15 @@ jobs:
     - name: Run tests
       run: cargo test --verbose --features serial
 
+    # Async feature, and no_std build for the ESP32-C3 target
+    - name: Clippy (async)
+      run: cargo clippy --features async --all-targets -- -D warnings
+
+    - name: Build no_std (riscv32imc, async)
+      run: |
+        rustup target add riscv32imc-unknown-none-elf
+        cargo build --target riscv32imc-unknown-none-elf --features async
+
   tag-release:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
