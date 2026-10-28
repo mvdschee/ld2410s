@@ -1,8 +1,8 @@
 use crate::{
 	Packet, StandardPacket,
 	types::{
-		AckPacket, CMD_HEAD, CMD_TAIL, FirmwareVersion, MINIMAL_HEAD, MINIMAL_TAIL, MinimalPacket,
-		STANDARD_HEAD, STANDARD_TAIL, TargetState,
+		AckPacket, CMD_HEAD, CMD_TAIL, FirmwareVersion, MAX_FRAME_LEN, MINIMAL_HEAD, MINIMAL_TAIL,
+		MinimalPacket, STANDARD_HEAD, STANDARD_TAIL, TargetState,
 	},
 };
 use heapless::Vec;
@@ -20,6 +20,12 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 
 		let data_len = (input[i + 4] as usize) | ((input[i + 5] as usize) << 8);
 		let total = 4 + 2 + data_len + 4;
+
+		// Bytes lost after the header: waiting for this length would stall the stream.
+		if total > MAX_FRAME_LEN {
+			i += 1;
+			break;
+		}
 
 		if i + total > input.len() {
 			break;
@@ -156,6 +162,12 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 
 		// Entire frame size = head(4) + len(2) + data_len + tail(4)
 		let total = 4 + 2 + data_len + 4;
+
+		// Bytes lost after the header: waiting for this length would stall the stream.
+		if total > MAX_FRAME_LEN {
+			i += 1;
+			break;
+		}
 
 		if i + total > input.len() {
 			break; // incomplete frame

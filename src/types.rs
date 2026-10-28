@@ -31,6 +31,9 @@ pub const STANDARD_TAIL: [u8; 4] = [0xF8, 0xF7, 0xF6, 0xF5];
 pub const CMD_HEAD: [u8; 4] = [0xFD, 0xFC, 0xFB, 0xFA];
 pub const CMD_TAIL: [u8; 4] = [0x04, 0x03, 0x02, 0x01];
 
+// Largest frame on the wire: the buffer size the sensor reports in its enter-config ACK.
+pub const MAX_FRAME_LEN: usize = 128;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputMode {
 	Minimal,

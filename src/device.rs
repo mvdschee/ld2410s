@@ -124,7 +124,11 @@ where
 		// The sensor sometimes answers the first command after enter with a repeated
 		// enter ACK and drops the command (seen after a fresh plug-in), so retry once.
 		for _ in 0..2 {
-			self.send_and_wait_ack(&commands::enter_config_frame())?;
+			// The sensor may be in config mode even if its enter ACK was lost, so still exit.
+			if let Err(e) = self.send_and_wait_ack(&commands::enter_config_frame()) {
+				result = Err(e);
+				break;
+			}
 			self.timer.sleep(self.config.config_mode_delay);
 
 			result = self.send_and_wait_ack(cmd);
@@ -165,6 +169,11 @@ where
 	/// Attempt to read the next packet from UART.
 	/// This is non-blocking regarding the UART if the UART implementation is non-blocking.
 	pub fn next_packet(&mut self) -> Result<Option<Packet>, Error<U::Error>> {
+		// Drain buffered packets first, or each read outpaces parsing and the buffer overflows.
+		if let Some(p) = self.protocol.next_packet() {
+			return Ok(Some(p));
+		}
+
 		let mut read_buffer = [0u8; 128];
 		match self.uart.read(&mut read_buffer) {
 			Ok(0) => {}
@@ -364,6 +373,43 @@ mod tests {
 		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
 		assert!(matches!(dev.set_response_speed(10), Err(Error::Timeout)));
 		assert_eq!(sent.borrow().last(), Some(&0x00FE));
+	}
+
+	#[test]
+	fn lost_enter_ack_still_exits_config_mode() {
+		// The sensor may have entered config mode even though its ACK never arrived.
+		let sent = std::rc::Rc::new(core::cell::RefCell::new(StdVec::new()));
+		let log = sent.clone();
+		let uart = ScriptedUart {
+			reply: move |cmd| {
+				log.borrow_mut().push(cmd);
+				if cmd == 0x00FF {
+					StdVec::new()
+				} else {
+					ack(cmd)
+				}
+			},
+			rx: StdVec::new(),
+		};
+		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
+		assert!(matches!(dev.set_response_speed(10), Err(Error::Timeout)));
+		assert_eq!(sent.borrow().last(), Some(&0x00FE));
+	}
+
+	#[test]
+	fn backlog_larger_than_the_parse_buffer_is_not_dropped() {
+		// Each call reads up to 128 B but returns one packet; reading before parsing grew the
+		// 1024 B buffer until it dropped frames (86 of 120 after 15 s of unread Standard data).
+		let frames = 400;
+		let backlog: StdVec<u8> =
+			(0..frames).flat_map(|_| [0x6E, 0x02, 0x64, 0x00, 0x62]).collect();
+		let uart = ScriptedUart {
+			reply: |_| StdVec::new(),
+			rx: backlog,
+		};
+		let mut dev = LD2410S::new(uart, FakeTimer(Cell::new(Duration::ZERO)), OutputMode::Minimal);
+		let delivered = (0..2 * frames).filter_map(|_| dev.next_packet().unwrap()).count();
+		assert_eq!(delivered, frames);
 	}
 
 	#[test]

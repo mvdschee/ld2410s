@@ -49,7 +49,11 @@ where
 		// The sensor sometimes answers the first command after enter with a repeated
 		// enter ACK and drops the command (seen after a fresh plug-in), so retry once.
 		for _ in 0..2 {
-			self.send_and_wait_ack(&commands::enter_config_frame()).await?;
+			// The sensor may be in config mode even if its enter ACK was lost, so still exit.
+			if let Err(e) = self.send_and_wait_ack(&commands::enter_config_frame()).await {
+				result = Err(e);
+				break;
+			}
 			Timer::after(delay).await;
 
 			result = self.send_and_wait_ack(cmd).await;
@@ -290,6 +294,42 @@ mod tests {
 			self.rx.drain(..n);
 			Ok(n)
 		}
+	}
+
+	/// Never replies; records the command word of each frame written.
+	struct SilentUart(StdVec<u16>);
+
+	impl ErrorType for SilentUart {
+		type Error = ErrorKind;
+	}
+
+	impl Write for SilentUart {
+		async fn write(&mut self, data: &[u8]) -> Result<usize, ErrorKind> {
+			self.0.push(commands::command_word(data));
+			Ok(data.len())
+		}
+
+		async fn flush(&mut self) -> Result<(), ErrorKind> {
+			Ok(())
+		}
+	}
+
+	impl Read for SilentUart {
+		async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, ErrorKind> {
+			Ok(0)
+		}
+	}
+
+	#[tokio::test]
+	async fn lost_enter_ack_still_exits_config_mode() {
+		// The sensor may have entered config mode even though its ACK never arrived.
+		let mut dev = LD2410SAsync::new(SilentUart(StdVec::new()), OutputMode::Minimal);
+		dev.set_config(Config {
+			command_timeout: CoreDuration::from_millis(20),
+			config_mode_delay: CoreDuration::ZERO,
+		});
+		assert!(matches!(dev.set_response_speed(10).await, Err(Error::Timeout)));
+		assert_eq!(dev.uart.0.last(), Some(&0x00FE));
 	}
 
 	#[tokio::test]

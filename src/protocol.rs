@@ -246,6 +246,23 @@ mod tests {
 	}
 
 	#[test]
+	fn truncated_header_does_not_stall_the_stream() {
+		// Bytes lost right after a header (e.g. an RX FIFO overflow) leave a garbage length.
+		// The ACK behind it must still come out: in config mode the sensor sends nothing else.
+		let ack =
+			[0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0x70, 0x01, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01];
+		for head in [STANDARD_HEAD, CMD_HEAD] {
+			let mut protocol = Protocol::new();
+			protocol.process_bytes(&head);
+			protocol.process_bytes(&ack);
+			assert!(
+				matches!(protocol.next_packet(), Some(Packet::Ack(a)) if a.command == 0x0070),
+				"after {head:02X?}"
+			);
+		}
+	}
+
+	#[test]
 	fn no_acks_dropped_when_buffered_together() {
 		// Two ACKs from a real sensor (enter config, exit config) arriving in one read.
 		let enter = [
