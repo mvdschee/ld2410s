@@ -6,6 +6,6 @@ release:
 	@test -z "$$(git status --porcelain)" || (echo "working tree not clean" && exit 1)
 	@git fetch -q origin main
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || (echo "main is not in sync with origin, run git pull" && exit 1)
-	@grep -A1 '^name = "proxy"' Cargo.lock | grep -q 'version = "$(VERSION)"' || (echo "Cargo.lock is not at $(VERSION), run cargo build" && exit 1)
+	@grep -A1 '^name = "ld2410s"' Cargo.lock | grep -q 'version = "$(VERSION)"' || (echo "Cargo.lock is not at $(VERSION), run cargo build" && exit 1)
 	git tag -a v$(VERSION) -m v$(VERSION)
 	git push origin v$(VERSION)
