@@ -10,7 +10,6 @@ keywords = ["ld2410s", "radar", "presence", "embedded", "uart"]
 categories = ["embedded", "hardware-support", "no-std"]
 exclude = ["docs/*.pdf", ".github/", "makefile"]
 edition = "2024"
-resolver = "2"
 
 [package.metadata.docs.rs]
 features = ["serial", "async"]
