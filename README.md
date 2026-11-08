@@ -127,4 +127,4 @@ Runs the sensor's automatic threshold calibration. Keep the detection area empty
 
 ## 📝 License
 
-MIT License.
+Copyright (c) 2025 Max van der Schee. Licensed under the [EUPL-1.2](LICENSE).

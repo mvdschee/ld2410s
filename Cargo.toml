@@ -1,10 +1,19 @@
 [package]
 name = "ld2410s"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Max van der Schee <26795741+mvdschee@users.noreply.github.com>"]
 description = "HLK-LD2410S driver with backend-agnostic UART ownership for serialport or esp-idf-hal"
+license = "EUPL-1.2"
+repository = "https://github.com/mvdschee/ld2410s"
+readme = "README.md"
+keywords = ["ld2410s", "radar", "presence", "embedded", "uart"]
+categories = ["embedded", "hardware-support", "no-std"]
+exclude = ["docs/*.pdf"]
 edition = "2024"
 resolver = "2"
+
+[package.metadata.docs.rs]
+features = ["serial", "async"]
 
 [lib]
 name = "ld2410s"
