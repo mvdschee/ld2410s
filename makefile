@@ -1,4 +1,4 @@
-# tags the version in Cargo.toml and pushes it, which starts release.yml
+# tags the version in Cargo.toml and pushes the tag; then `make publish`
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
 release:
@@ -9,3 +9,10 @@ release:
 	@grep -A1 '^name = "ld2410s"' Cargo.lock | grep -q 'version = "$(VERSION)"' || (echo "Cargo.lock is not at $(VERSION), run cargo build" && exit 1)
 	git tag -a v$(VERSION) -m v$(VERSION)
 	git push origin v$(VERSION)
+
+# publishes to crates.io when the files cargo would upload match tag v$(VERSION);
+# --registry crates-io skips the panamax mirror that replaces crates.io in ~/.cargo/config.toml
+publish:
+	@git rev-parse -q --verify v$(VERSION) >/dev/null || (echo "v$(VERSION) is not tagged, run make release" && exit 1)
+	@git diff --quiet v$(VERSION) -- $$(cargo package --list --allow-dirty | grep -vxE 'Cargo\.toml\.orig|\.cargo_vcs_info\.json') || (echo "packaged files differ from v$(VERSION)" && exit 1)
+	cargo publish --registry crates-io
