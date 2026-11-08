@@ -1,13 +1,20 @@
 use crate::parser::{parse_command_responses, parse_minimal_frames, parse_standard_frames};
-use crate::types::{CMD_HEAD, MINIMAL_HEAD, Packet, STANDARD_HEAD};
-use heapless::Deque;
+use crate::types::{CMD_HEAD, MAX_FRAME_LEN, MINIMAL_HEAD, Packet, STANDARD_HEAD};
 
-pub const STREAM_BUF_CAP: usize = 1024;
+pub const STREAM_BUF_CAP: usize = 2 * MAX_FRAME_LEN;
+
+// When `next_packet` returns None, under MAX_FRAME_LEN bytes of a partial frame remain, so
+// the next read gets more than MAX_FRAME_LEN bytes of space: a full 128-byte UART FIFO fits.
+const _: () = assert!(STREAM_BUF_CAP >= 2 * MAX_FRAME_LEN);
 
 /// Protocol handles the stateful parsing of bytes into packets.
 /// It is "Sans-IO", meaning it doesn't know about UART or threads.
+/// The UART reads straight into its buffer (`spare_mut` + `commit`), so nothing is copied twice.
 pub struct Protocol {
-	stream_buf: Deque<u8, STREAM_BUF_CAP>,
+	buf: [u8; STREAM_BUF_CAP],
+	/// Unparsed bytes are `buf[start..end]`.
+	start: usize,
+	end: usize,
 }
 
 impl Default for Protocol {
@@ -19,82 +26,79 @@ impl Default for Protocol {
 impl Protocol {
 	pub fn new() -> Self {
 		Self {
-			stream_buf: Deque::new(),
+			buf: [0; STREAM_BUF_CAP],
+			start: 0,
+			end: 0,
 		}
 	}
 
-	/// Feed a single byte into the parser.
-	pub fn process_byte(&mut self, byte: u8) {
-		if self.stream_buf.push_back(byte).is_err() {
-			let _ = self.stream_buf.pop_front();
-			let _ = self.stream_buf.push_back(byte);
+	/// Space for the next UART read, after moving unparsed bytes to the front.
+	pub fn spare_mut(&mut self) -> &mut [u8] {
+		if self.start > 0 {
+			self.buf.copy_within(self.start..self.end, 0);
+			self.end -= self.start;
+			self.start = 0;
 		}
+		&mut self.buf[self.end..]
 	}
 
-	/// Feed a slice of bytes into the parser.
-	pub fn process_bytes(&mut self, bytes: &[u8]) {
-		for &b in bytes {
-			self.process_byte(b);
-		}
+	/// Marks `n` bytes written into `spare_mut` as received.
+	pub fn commit(&mut self, n: usize) {
+		self.end += n;
 	}
 
 	/// Attempt to parse the next packet from the internal buffer.
 	/// Returns None if no complete packet is available.
 	pub fn next_packet(&mut self) -> Option<Packet> {
 		loop {
-			if self.stream_buf.is_empty() {
+			let data = &self.buf[self.start..self.end];
+			if data.is_empty() {
 				return None;
 			}
 
-			if self.stream_buf.len() < 4 {
+			if data.len() < 4 {
 				// We need at least 4 bytes to check headers (except for minimal, which is 1 byte head)
 				// but even minimal needs 5 bytes total.
-				let head = *self.stream_buf.front().unwrap();
+				let head = data[0];
 				if head != MINIMAL_HEAD && head != STANDARD_HEAD[0] && head != CMD_HEAD[0] {
-					let _ = self.stream_buf.pop_front();
+					self.start += 1;
 					continue;
 				}
 				return None;
-			}
-
-			// Peek at the beginning of the buffer to check headers
-			let mut head = [0u8; 4];
-			for (i, byte) in self.stream_buf.iter().take(4).enumerate() {
-				head[i] = *byte;
 			}
 
 			let consumed;
 			let mut packet = None;
 
 			// 1. Check for Command/ACK Header
-			if head == CMD_HEAD {
-				let (p, c) = self.parse_with::<_, 4>(parse_command_responses, 256);
+			if data[..4] == CMD_HEAD {
+				let (p, c) = parse_command_responses(window(data, STREAM_BUF_CAP));
 				if c > 0 {
 					consumed = c;
-					packet = p.first().cloned();
+					packet = p;
 				} else {
 					return None; // Incomplete
 				}
 			}
 			// 2. Check for Standard Header
-			else if head == STANDARD_HEAD {
-				let (p, c) = self.parse_with::<_, 16>(parse_standard_frames, 256);
+			else if data[..4] == STANDARD_HEAD {
+				let (p, c) = parse_standard_frames(window(data, STREAM_BUF_CAP));
 				if c > 0 {
 					consumed = c;
-					packet = p.first().cloned();
+					packet = p;
 				} else {
 					return None; // Incomplete
 				}
 			}
 			// 3. Check for Minimal Header
-			else if head[0] == MINIMAL_HEAD {
-				let (p, c) = self.parse_with::<_, 16>(parse_minimal_frames, 16);
+			else if data[0] == MINIMAL_HEAD {
+				let (p, c) = parse_minimal_frames(window(data, 16));
 				if c > 0 {
 					consumed = c;
-					packet = p.first().cloned();
+					packet = p;
 				} else {
 					// Might be incomplete minimal frame (needs 5 bytes)
-					if self.stream_buf.len() < 5 {
+					if data.len() < 5 {
 						return None;
 					} else {
 						// Malformed? skip the 0x6E
@@ -107,36 +111,18 @@ impl Protocol {
 				consumed = 1;
 			}
 
-			// Apply consumption
-			for _ in 0..consumed {
-				let _ = self.stream_buf.pop_front();
-			}
+			self.start += consumed;
 
 			if packet.is_some() {
 				return packet;
 			}
 		}
 	}
+}
 
-	/// Helper to copy buffer to a contiguous slice and run a parser function
-	fn parse_with<F, const P: usize>(
-		&self,
-		parser: F,
-		max_len: usize,
-	) -> (heapless::Vec<Packet, P>, usize)
-	where
-		F: FnOnce(&[u8]) -> (heapless::Vec<Packet, P>, usize),
-	{
-		let snapshot_len = self.stream_buf.len().min(max_len);
-		let mut snapshot = [0u8; 256]; // Should be large enough for any frame
-		let final_len = snapshot_len.min(256);
-
-		for (i, byte) in self.stream_buf.iter().take(final_len).enumerate() {
-			snapshot[i] = *byte;
-		}
-
-		parser(&snapshot[..final_len])
-	}
+/// The first `max_len` bytes: how far a parser may look ahead.
+fn window(data: &[u8], max_len: usize) -> &[u8] {
+	&data[..data.len().min(max_len)]
 }
 
 #[cfg(test)]
@@ -162,11 +148,18 @@ mod tests {
 		f
 	}
 
+	/// Copies a whole read into the parse buffer, as the drivers do.
+	fn feed(protocol: &mut Protocol, bytes: &[u8]) {
+		protocol.spare_mut()[..bytes.len()].copy_from_slice(bytes);
+		protocol.commit(bytes.len());
+	}
+
+	/// Drives the protocol like the drivers: drain, then read up to `chunk` bytes into the space left.
 	fn distances(stream: &[u8], chunk: usize) -> std::vec::Vec<u16> {
 		let mut protocol = Protocol::new();
 		let mut out = std::vec::Vec::new();
-		for part in stream.chunks(chunk) {
-			protocol.process_bytes(part);
+		let mut rest = stream;
+		loop {
 			while let Some(p) = protocol.next_packet() {
 				match p {
 					Packet::Minimal(m) => out.push(m.distance_cm),
@@ -174,8 +167,46 @@ mod tests {
 					_ => {}
 				}
 			}
+			if rest.is_empty() {
+				return out;
+			}
+			let n = chunk.min(rest.len()).min(protocol.spare_mut().len());
+			feed(&mut protocol, &rest[..n]);
+			rest = &rest[n..];
 		}
-		out
+	}
+
+	#[test]
+	fn a_full_uart_fifo_always_fits_after_draining() {
+		// Frames, truncated frames and garbage, biased to header bytes, read in random sizes.
+		let mut seed = 0x2545_F491_u32;
+		let mut rand = move |n: u32| {
+			seed ^= seed << 13;
+			seed ^= seed >> 17;
+			seed ^= seed << 5;
+			seed % n
+		};
+		let mut stream = std::vec::Vec::new();
+		for _ in 0..5000 {
+			match rand(6) {
+				0 => stream.extend(minimal_frame(rand(800) as u16)),
+				1 => stream.extend(standard_frame(rand(800) as u16)),
+				2 => stream.extend(&standard_frame(1)[..rand(80) as usize]),
+				3 => stream.extend([0xFD, 0xFC, 0xFB, 0xFA, rand(256) as u8, 0x00]),
+				4 => stream.push([MINIMAL_HEAD, 0xF4, 0xFD, 0x62][rand(4) as usize]),
+				_ => stream.push(rand(256) as u8),
+			}
+		}
+		let mut protocol = Protocol::new();
+		let mut rest = &stream[..];
+		while !rest.is_empty() {
+			while protocol.next_packet().is_some() {}
+			assert!(protocol.spare_mut().len() > MAX_FRAME_LEN);
+			let n = (rand(STREAM_BUF_CAP as u32) as usize + 1).min(rest.len());
+			let n = n.min(protocol.spare_mut().len());
+			feed(&mut protocol, &rest[..n]);
+			rest = &rest[n..];
+		}
 	}
 
 	#[test]
@@ -208,7 +239,7 @@ mod tests {
 			0x00, 0x00, 0xD7, 0x01, 0x00, 0x00, 0xF8, 0xF7, 0xF6, 0xF5,
 		];
 		let mut protocol = Protocol::new();
-		protocol.process_bytes(&frame);
+		feed(&mut protocol, &frame);
 		let Some(Packet::Standard(s)) = protocol.next_packet() else {
 			panic!("expected a standard packet");
 		};
@@ -224,7 +255,7 @@ mod tests {
 		// PDF 2.2.9: F4F3F2F1 | len | 0x03 | progress(u16) | F8F7F6F5
 		let frame = [0xF4, 0xF3, 0xF2, 0xF1, 0x03, 0x00, 0x03, 0x88, 0x13, 0xF8, 0xF7, 0xF6, 0xF5];
 		let mut protocol = Protocol::new();
-		protocol.process_bytes(&frame);
+		feed(&mut protocol, &frame);
 		assert!(matches!(protocol.next_packet(), Some(Packet::ThresholdProgress(5000))));
 	}
 
@@ -236,7 +267,7 @@ mod tests {
 		frame.extend(values.iter().flat_map(|v| v.to_le_bytes()));
 		frame.extend([0x04, 0x03, 0x02, 0x01]);
 		let mut protocol = Protocol::new();
-		protocol.process_bytes(&frame);
+		feed(&mut protocol, &frame);
 		let Some(Packet::Ack(ack)) = protocol.next_packet() else {
 			panic!("expected an ACK");
 		};
@@ -253,8 +284,8 @@ mod tests {
 			[0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0x70, 0x01, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01];
 		for head in [STANDARD_HEAD, CMD_HEAD] {
 			let mut protocol = Protocol::new();
-			protocol.process_bytes(&head);
-			protocol.process_bytes(&ack);
+			feed(&mut protocol, &head);
+			feed(&mut protocol, &ack);
 			assert!(
 				matches!(protocol.next_packet(), Some(Packet::Ack(a)) if a.command == 0x0070),
 				"after {head:02X?}"
@@ -272,8 +303,8 @@ mod tests {
 		let exit =
 			[0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0xFE, 0x01, 0x00, 0x00, 0x04, 0x03, 0x02, 0x01];
 		let mut protocol = Protocol::new();
-		protocol.process_bytes(&enter);
-		protocol.process_bytes(&exit);
+		feed(&mut protocol, &enter);
+		feed(&mut protocol, &exit);
 		let mut commands = std::vec::Vec::new();
 		while let Some(Packet::Ack(a)) = protocol.next_packet() {
 			commands.push(a.command);

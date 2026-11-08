@@ -7,9 +7,10 @@ use crate::{
 };
 use heapless::Vec;
 
-/// Parse command responses (ACKs), firmware versions, etc.
-pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
-	let mut out: Vec<Packet, 4> = Vec::new();
+/// Parse the first command response (ACK, firmware version, etc.).
+/// Returns (packet, bytes_consumed); bytes are consumed without a packet when skipping garbage.
+pub fn parse_command_responses(input: &[u8]) -> (Option<Packet>, usize) {
+	let mut out = None;
 	let mut i = 0usize;
 
 	while i + 10 <= input.len() {
@@ -65,7 +66,7 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 					let major = (payload[6] as u16) | ((payload[7] as u16) << 8);
 					let minor = (payload[8] as u16) | ((payload[9] as u16) << 8);
 					let patch = (payload[10] as u16) | ((payload[11] as u16) << 8);
-					let _ = out.push(Packet::Firmware(FirmwareVersion {
+					out = Some(Packet::Firmware(FirmwareVersion {
 						equipment_type,
 						version_type,
 						major,
@@ -84,7 +85,7 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 					if payload.len() >= 4 + sn_len {
 						let mut sn = Vec::new();
 						let _ = sn.extend_from_slice(&payload[4..4 + sn_len]);
-						let _ = out.push(Packet::SerialNumber(sn));
+						out = Some(Packet::SerialNumber(sn));
 					}
 				}
 			}
@@ -97,7 +98,7 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 					if payload.len() > 2 {
 						let _ = p.extend_from_slice(&payload[2..]);
 					}
-					let _ = out.push(Packet::Ack(AckPacket {
+					out = Some(Packet::Ack(AckPacket {
 						command: cmd_word & 0x00FF, // strip the 0x01 ACK bit roughly
 						success,
 						payload: p,
@@ -108,16 +109,17 @@ pub fn parse_command_responses(input: &[u8]) -> (Vec<Packet, 4>, usize) {
 
 		i += total;
 		// Protocol consumes only up to the first packet; parsing further would drop frames.
-		if !out.is_empty() {
+		if out.is_some() {
 			break;
 		}
 	}
 	(out, i)
 }
 
-/// Parse one or more minimal packets from a byte slice
-pub fn parse_minimal_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
-	let mut out: Vec<Packet, 16> = Vec::new();
+/// Parse the first minimal packet from a byte slice.
+/// Returns (packet, bytes_consumed).
+pub fn parse_minimal_frames(input: &[u8]) -> (Option<Packet>, usize) {
+	let mut out = None;
 	let mut i = 0usize;
 
 	while i + 5 <= input.len() {
@@ -130,7 +132,7 @@ pub fn parse_minimal_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 				target_state: TargetState::from(state),
 				distance_cm: dist,
 			};
-			let _ = out.push(Packet::from(pkt));
+			out = Some(Packet::from(pkt));
 			i += 5;
 			break; // see parse_command_responses
 		} else {
@@ -140,10 +142,10 @@ pub fn parse_minimal_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 	(out, i)
 }
 
-/// Parse one or more *standard* frames (Table 2-1).
-/// Returns (frames, bytes_consumed).
-pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
-	let mut out: Vec<Packet, 16> = Vec::new();
+/// Parse the first *standard* frame (Table 2-1).
+/// Returns (frame, bytes_consumed).
+pub fn parse_standard_frames(input: &[u8]) -> (Option<Packet>, usize) {
+	let mut out = None;
 	let mut i = 0usize;
 
 	while i + 10 <= input.len() {
@@ -192,7 +194,7 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 
 		if data_type == 0x03 && data_len >= 3 {
 			let progress = (input[data_start + 1] as u16) | ((input[data_start + 2] as u16) << 8);
-			let _ = out.push(Packet::ThresholdProgress(progress));
+			out = Some(Packet::ThresholdProgress(progress));
 		}
 
 		// Need at least: data_type(1) + state(1) + distance(2) + reserved(2) = 6 bytes
@@ -224,12 +226,12 @@ pub fn parse_standard_frames(input: &[u8]) -> (Vec<Packet, 16>, usize) {
 				reserved: _reserved,
 				energy,
 			};
-			let _ = out.push(Packet::from(pkt));
+			out = Some(Packet::from(pkt));
 		}
 
 		// Consume this frame
 		i += total;
-		if !out.is_empty() {
+		if out.is_some() {
 			break; // see parse_command_responses
 		}
 	}

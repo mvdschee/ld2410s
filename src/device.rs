@@ -174,10 +174,8 @@ where
 			return Ok(Some(p));
 		}
 
-		let mut read_buffer = [0u8; 128];
-		match self.uart.read(&mut read_buffer) {
-			Ok(0) => {}
-			Ok(n) => self.protocol.process_bytes(&read_buffer[..n]),
+		match self.uart.read(self.protocol.spare_mut()) {
+			Ok(n) => self.protocol.commit(n),
 			Err(e) => return Err(Error::Uart(e)),
 		}
 
@@ -398,8 +396,9 @@ mod tests {
 
 	#[test]
 	fn backlog_larger_than_the_parse_buffer_is_not_dropped() {
-		// Each call reads up to 128 B but returns one packet; reading before parsing grew the
-		// 1024 B buffer until it dropped frames (86 of 120 after 15 s of unread Standard data).
+		// Each call reads a whole UART buffer's worth but returns one packet; reading before
+		// parsing grew the parse buffer until it dropped frames (86 of 120 after 15 s of unread
+		// Standard data).
 		let frames = 400;
 		let backlog: StdVec<u8> =
 			(0..frames).flat_map(|_| [0x6E, 0x02, 0x64, 0x00, 0x62]).collect();

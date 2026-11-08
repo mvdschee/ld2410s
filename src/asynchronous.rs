@@ -112,11 +112,8 @@ where
 			return Ok(Some(p));
 		}
 
-		let mut buf = [0u8; 128];
-		let n = self.uart.read(&mut buf).await.map_err(Error::Uart)?;
-		if n > 0 {
-			self.protocol.process_bytes(&buf[..n]);
-		}
+		let n = self.uart.read(self.protocol.spare_mut()).await.map_err(Error::Uart)?;
+		self.protocol.commit(n);
 
 		Ok(self.protocol.next_packet())
 	}
