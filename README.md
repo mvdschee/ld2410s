@@ -30,11 +30,11 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Desktop Serial (Sync)
-ld2410s = { version = "0.2.0", features = ["serial"] }
+ld2410s = { version = "0.3.0", features = ["serial"] }
 # Async Support
-# ld2410s = { version = "0.2.0", features = ["async"] }
+# ld2410s = { version = "0.3.0", features = ["async"] }
 # Embedded ESP-IDF
-# ld2410s = { version = "0.2.0", features = ["embedded"] }
+# ld2410s = { version = "0.3.0", features = ["embedded"] }
 ```
 
 ## 🚀 Examples

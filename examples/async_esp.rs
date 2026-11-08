@@ -1,6 +1,7 @@
-use esp_idf_hal::prelude::*;
+use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::task::block_on;
 use esp_idf_hal::uart::{AsyncUartDriver, config::Config};
+use esp_idf_hal::units::*;
 use ld2410s::asynchronous::LD2410SAsync;
 use ld2410s::{BAUD_RATE, OutputMode, Packet};
 

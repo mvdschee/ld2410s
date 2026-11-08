@@ -1,6 +1,7 @@
 use core::time::Duration;
-use esp_idf_hal::prelude::*;
+use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::uart::{UartDriver, config::Config};
+use esp_idf_hal::units::*;
 use ld2410s::OutputMode;
 use ld2410s::{
 	BAUD_RATE, LD2410S,
